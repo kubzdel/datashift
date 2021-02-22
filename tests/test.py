@@ -64,10 +64,10 @@ class DatasetIntegrationTestCase(unittest.TestCase):
         Data(input_data_path_pattern=self.INPUT_DATA,
              output_data_dir_path=self.OUTPUT_DIR,
              output_file_name_prefix='processed',
-             processing_chunk_size=100,
+             processing_chunk_size=5,
              input_columns=["comment_text", "toxic", "severe_toxic", "obscene", "threat", "insult",
                             "identity_hate"],
-             output_file_size=10,
+             output_file_size=20,
              num_workers=1) \
             .process(CleanTextTask()) \
             .shift()

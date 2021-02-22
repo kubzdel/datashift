@@ -238,6 +238,7 @@ class Data:
                 remaining = self.output_file_size - last_file_items
         if last_file_path and remaining > 0:
             self._save_to_csv(data[:remaining], last_file_path, encoding='utf-8', header=False)
+            last_file_items+=remaining
 
         if len(data) > remaining:
             for data_part in self._chunk_by_n_rows(data[remaining:], self.output_file_size):
@@ -305,10 +306,10 @@ class Data:
             local_reduction[task.reduced_value_name] = reduced_locally_value
         return local_reduction
 
-    def _save_to_csv(self, data_list, file_path, header, encoding, mode='w') -> None:
+    def _save_to_csv(self, data_list, file_path, header, encoding, mode='a') -> None:
         keys = data_list[0].keys()
-        with open(file_path, mode, encoding=encoding)  as output_file:
-            dict_writer = csv.DictWriter(output_file, keys)
+        with open(file_path, mode, encoding=encoding) as output_file:
+            dict_writer = csv.DictWriter(output_file, keys,quoting=csv.QUOTE_ALL)
             if header:
                 dict_writer.writeheader()
             dict_writer.writerows(data_list)
