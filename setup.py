@@ -8,7 +8,7 @@ with open(os.path.join(HERE, "README.md")) as fid:
 
 setup(
     name="datashift",
-    version="0.0.1",
+    version="0.0.2",
     description="Lightweight and generic data processor that allows quickly filtering, balancing and processing a data set from one form to another.",
     long_description=README,
     long_description_content_type="text/markdown",
