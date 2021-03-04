@@ -74,6 +74,23 @@ class DatasetIntegrationTestCase(unittest.TestCase):
 
         self.assertEqual(len(glob.glob('{}/*.csv'.format(self.OUTPUT_DIR))), 29)
 
+
+    def test_inference(self):
+        data=Data(input_data_path_pattern=self.INPUT_DATA,
+             output_data_dir_path=self.OUTPUT_DIR,
+             output_file_name_prefix='processed',
+             processing_chunk_size=5,
+             input_columns=["comment_text", "toxic", "severe_toxic", "obscene", "threat", "insult",
+                            "identity_hate"],
+             output_file_size=20,
+             num_workers=1) \
+            .process(CleanTextTask(),inference=True)
+        data_sample={'comment_text':'THIS  is... a $Text$.'}
+
+        result=data.inference(data_sample)
+
+        self.assertEqual(result['comment_text'],'this is... a text.')
+
     def _load_reduced_file(self):
         results_file = open(self.OUTPUT_METADATA)
         return yaml.load(results_file, Loader=yaml.FullLoader)

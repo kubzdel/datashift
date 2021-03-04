@@ -67,6 +67,7 @@ class Data:
         self.input_columns = input_columns
         self.output_file_size = output_file_size
         self.tasks = []
+        self.inference_tasks=[]
         self.output_files_counter = 0
         self.output_rows_last_file = 0
         self.output_metadata_file_path = output_metadata_file_path
@@ -81,20 +82,24 @@ class Data:
         elif verbose and logger is not None:
             self.logger = logger
 
-    def process(self, task: AbstractProcessingTask) -> Data:
+    def process(self, task: AbstractProcessingTask, inference=False) -> Data:
         """
         Adds a new processing task
         """
         assert task.type() == TaskType.PROCESSOR
         self.tasks.append(task)
+        if inference:
+            self.inference_tasks.append(task)
         return self
 
-    def filter(self, task: AbstractFilterTask) -> Data:
+    def filter(self, task: AbstractFilterTask, inference=False) -> Data:
         """
         Adds a new filtering task
         """
         assert task.type() == TaskType.FILTER
         self.tasks.append(task)
+        if inference:
+            self.inference_tasks.append(task)
         return self
 
     def reduce(self, task: AbstractFilterTask) -> Data:
@@ -432,6 +437,16 @@ class Data:
         self._print_logs(
             'Data from {} SUCCESSFULLY shifted to {}!'.format(self.input_data_path_pattern, self.output_data_dir_path))
         pool.close()
+
+    def inference(self, data):
+        for inference_task in self.inference_tasks:
+            if inference_task.type()==TaskType.PROCESSOR:
+                data=inference_task.process(data)
+            elif inference_task.type()==TaskType.FILTER and not inference_task.filter(data):
+                return None
+            else:
+                raise Exception('Unsupported task for inference {}.'.format(inference_task.type()))
+        return data
 
     def _print_logs(self, message):
         if self.verbose:
