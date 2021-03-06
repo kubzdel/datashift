@@ -54,12 +54,10 @@ class AbstractFilterTask(_AbstractTask):
         """
         pass
 
-class DirectFilterTask(AbstractFilterTask):
-    def __init__(self, map_func):
-        self.map_func=map_func
+class NotNoneFilterTask(AbstractFilterTask):
 
     def filter(self, sample) -> bool:
-        return self.map_func(sample)
+        return sample is not None
 
 
 class AbstractProcessingTask(_AbstractTask):
@@ -90,13 +88,6 @@ class AbstractProcessingTask(_AbstractTask):
             dict: Modified data observation
         """
         pass
-
-class DirectProcessingTask(AbstractProcessingTask):
-    def __init__(self, map_func):
-        self.map_func=map_func
-
-    def process(self, sample) -> dict:
-        return self.map_func(sample)
 
 class AbstractReduceTask(_AbstractTask):
     """
