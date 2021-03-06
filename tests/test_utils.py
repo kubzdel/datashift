@@ -38,6 +38,15 @@ class CleanTextTask(AbstractProcessingTask):
         data['comment_text'] = text
         return data
 
+class CleanTextLineTask(AbstractProcessingTask):
+    def process(self, data):
+        text = data.lower()
+        text = re.sub('[%s]' % re.escape('0123456789"#$%&\'()*+-/:;<=>?@[\\]^_`{|}~'), "", text)
+        text = re.sub('\n', " ", text)
+        text = re.sub('\r', "", text)
+        text = re.sub(' +', " ", text)
+        text = text.strip()
+        return text
 
 class SplitTextTask(AbstractProcessingTask):
     def process(self, data):

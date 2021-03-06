@@ -8,6 +8,7 @@ import math
 import multiprocessing
 import os
 import sys
+from abc import abstractmethod, ABC
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Iterator
@@ -19,7 +20,196 @@ import yaml
 from datashift.task import AbstractBalancingTask, TaskType, AbstractProcessingTask, AbstractFilterTask
 
 
-class Data:
+class AbstractReader(ABC):
+
+    @abstractmethod
+    def determine_chunked_execution_groups(self, pool, chunksize):
+        raise NotImplementedError("Method not implemented!")
+
+    @abstractmethod
+    def read_data_chunks(self, execution_groups):
+        raise NotImplementedError("Method not implemented!")
+
+
+class AbstractFileReader(AbstractReader):
+    def __init__(self, input_data_path_pattern):
+        self.input_data_path_pattern = input_data_path_pattern
+
+    @abstractmethod
+    def _determine_number_of_items_in_one_file(self, path) -> int:
+        raise NotImplementedError("Method not implemented!")
+
+    @abstractmethod
+    def _read_data_chunk(self, filepath, from_item, chunk_size):
+        raise NotImplementedError("Method not implemented!")
+
+    def _no_items_in_one_file(self, path_and_chunksize):
+        path, chunk_size = path_and_chunksize
+        return self._determine_number_of_items_in_one_file(path, chunk_size)
+
+    def determine_chunked_execution_groups(self, pool, chunk_size) -> list:
+        all_file_paths = glob.glob(self.input_data_path_pattern)
+        number_of_items_per_file = pool.map(self._no_items_in_one_file, [(path, chunk_size) for path in all_file_paths])
+        execution_groups = []
+        remaining = 0
+        for file, no_elements in zip(all_file_paths, number_of_items_per_file):
+            buffer_level = 0
+            if remaining > 0:
+                execution_groups[-1].append((file, buffer_level, min(remaining, no_elements)))
+                remaining = min(remaining, no_elements)
+                buffer_level = min(remaining, no_elements)
+
+            while buffer_level != no_elements:
+                if buffer_level + chunk_size <= no_elements:
+                    execution_groups.append([(file, buffer_level, chunk_size)])
+                    buffer_level += chunk_size
+                else:
+                    execution_groups.append([(file, buffer_level, no_elements - buffer_level)])
+                    remaining = chunk_size - (no_elements - buffer_level)
+                    buffer_level += (no_elements - buffer_level)
+        return execution_groups
+
+    def read_data_chunks(self, execution_groups):
+        data_list = []
+        for (filepath, from_item, chunk_size) in execution_groups:
+            data_chunk = self._read_data_chunk(filepath, from_item, chunk_size)
+            assert type(data_chunk) == list
+            data_list.append(data_chunk)
+        data_list = [item for sublist in data_list for item in sublist]
+        return data_list
+
+
+class DefaultCSVReader(AbstractFileReader):
+    def __init__(self, input_data_path_pattern, input_columns):
+        self.input_columns = input_columns
+        super().__init__(input_data_path_pattern)
+
+    def _determine_number_of_items_in_one_file(self, path, chunk_size) -> int:
+        with open(path, 'r', encoding='utf-8') as f:
+            first_key = next(csv.reader(f))[0]
+        df_iter = pd.read_csv(path, usecols=[first_key], chunksize=chunk_size)
+        for i, df in enumerate(df_iter):
+            continue
+        return chunk_size * i + df.shape[0]
+
+    def _read_data_chunk(self, filepath, from_item, chunk_size):
+        df = pd.read_csv(filepath, skiprows=range(1, max(from_item, 1)), nrows=chunk_size,
+                         usecols=self.input_columns).fillna('')
+        return df.to_dict('records')
+
+
+class DefaultTextLineReader(AbstractFileReader):
+    def __init__(self, input_data_path_pattern):
+        super().__init__(input_data_path_pattern)
+
+    def _determine_number_of_items_in_one_file(self, path, chunk_size) -> int:
+        counter = 0
+        for line in open(path):
+            counter += 1
+        return counter
+
+    def _read_data_chunk(self, filepath, from_item, chunk_size):
+        data_chunk = []
+        to_item = from_item + chunk_size
+        fp = open(filepath)
+        for i, line in enumerate(fp):
+            if from_item <= i < to_item:
+                data_chunk.append(line)
+            elif i == to_item:
+                break
+        fp.close()
+        return data_chunk
+
+
+class AbstractSaver(ABC):
+    @abstractmethod
+    def save(self, data):
+        raise NotImplementedError("Method not implemented!")
+
+
+class AbstractFileSaver(AbstractSaver):
+    def __init__(self, output_data_dir_path, output_file_name_prefix, output_file_size,
+                 saving_status_file_prefix='.saving_status'):
+        self.output_data_dir_path = output_data_dir_path
+        self.output_file_name_prefix = output_file_name_prefix
+        self.output_file_size = output_file_size
+        self.saving_status_file_prefix = saving_status_file_prefix
+        if self.saving_status_file_prefix in self.output_file_name_prefix:
+            raise Exception('The saving status file prefix ({}) can be a sub-name of output file name ({})',
+                            self.saving_status_file_prefix, self.output_file_name_prefix)
+
+    @abstractmethod
+    def _save_chunk(self, data, filename, new_file):
+        raise NotImplementedError("Method not implemented!")
+
+    @abstractmethod
+    def _file_extension(self):
+        raise NotImplementedError("Method not implemented!")
+
+    def _generate_file_path(self, pid, file_nr) -> str:
+        return os.path.join(self.output_data_dir_path,
+                            '{}_{}_{}.{}'.format(self.output_file_name_prefix, pid, file_nr, self._file_extension()))
+
+    def save(self, data) -> None:
+        if self.output_data_dir_path and not os.path.exists(self.output_data_dir_path):
+            os.makedirs(self.output_data_dir_path)
+        pid = os.getpid()
+        saving_status_file_path = '{}/{}_{}'.format(self.output_data_dir_path, self.saving_status_file_prefix, pid)
+        last_file_path = None
+        remaining = 0
+        if os.path.isfile(saving_status_file_path):
+            with open(saving_status_file_path, 'r') as f:
+                last_file_path, last_file_items_str = f.readline().split(';')
+                last_file_items = int(last_file_items_str)
+                remaining = self.output_file_size - last_file_items
+        if last_file_path and remaining > 0:
+            self._save_chunk(data[:remaining], last_file_path, False)
+            last_file_items += remaining
+
+        if len(data) > remaining:
+            for data_part in self._chunk_by_n_rows(data[remaining:], self.output_file_size):
+                next_file_nr = len(glob.glob(self._generate_file_path(pid, '*'))) + 1
+                file_path = self._generate_file_path(pid, next_file_nr)
+                self._save_chunk(data_part, file_path, True)
+                last_file_path = file_path
+                last_file_items = len(data_part)
+        with open(saving_status_file_path, 'w') as f:
+            f.writelines(['{};{}'.format(last_file_path, last_file_items)])
+
+    def _chunk_by_n_rows(self, data_list, size) -> tuple:
+        return (data_list[pos:pos + size] for pos in range(0, len(data_list), size))
+
+
+class DefaultCSVSaver(AbstractFileSaver):
+    def __init__(self, output_data_dir_path, output_file_name_prefix, output_file_size):
+        super().__init__(output_data_dir_path, output_file_name_prefix, output_file_size)
+
+    def _file_extension(self):
+        return 'csv'
+
+    def _save_chunk(self, data, filepath, new_file):
+        keys = data[0].keys()
+        with open(filepath, mode='a', encoding='utf-8') as output_file:
+            dict_writer = csv.DictWriter(output_file, keys, quoting=csv.QUOTE_ALL)
+            if new_file:
+                dict_writer.writeheader()
+            dict_writer.writerows(data)
+
+
+class DefaultTextLineSaver(AbstractFileSaver):
+    def __init__(self, output_data_dir_path, output_file_name_prefix, output_file_size):
+        super().__init__(output_data_dir_path, output_file_name_prefix, output_file_size)
+
+    def _file_extension(self):
+        return 'txt'
+
+    def _save_chunk(self, data, filepath, new_file):
+        with open(filepath, mode='a', encoding='utf-8') as output_file:
+            for line in data:
+                output_file.write("{}{}".format(line, os.linesep))
+
+
+class DataPipeline:
     """
         Lightweight and generic data processor that allows quickly filtering, balancing and processing a data set from one form to another.
         Especially useful for processing data from its original form to a form ready for advanced analysis and machine learning.
@@ -51,38 +241,31 @@ class Data:
 
     _FLATTEN_ORDER_EXCEPTION = "The flatten task can only be executed after a processing stage. Currently the are no processing tasks assigned"
 
-    def __init__(self, input_data_path_pattern, output_data_dir_path, output_file_name_prefix, input_columns,
-                 output_file_size=50000,
+    def __init__(self, reader, saver,
                  processing_chunk_size=20000, num_workers=None, output_metadata_file_path=None,
-                 output_metadata_file_format='yaml', saving_status_file_prefix='.saving_status', verbose=True,
+                 output_metadata_file_format='yaml', verbose=True,
                  logger=None):
         self.flattened_steps = []
         self.reduce_tasks = []
         assert output_metadata_file_format == 'yaml' or output_metadata_file_format == 'json' 'Only yaml and json files are supported to save reduced values.'
         self.num_workers = num_workers if num_workers is not None else multiprocessing.cpu_count() - 1
-        self.input_data_path_pattern = input_data_path_pattern
-        self.output_data_dir_path = output_data_dir_path
-        self.output_file_name_prefix = output_file_name_prefix
+        self.reader = reader
+        self.saver = saver
         self.processing_chunk_size = processing_chunk_size
-        self.input_columns = input_columns
-        self.output_file_size = output_file_size
         self.tasks = []
-        self.inference_tasks=[]
+        self.inference_tasks = []
         self.output_files_counter = 0
         self.output_rows_last_file = 0
         self.output_metadata_file_path = output_metadata_file_path
         self.output_metadata_file_format = output_metadata_file_format
-        self.saving_status_file_prefix = saving_status_file_prefix
         self.verbose = verbose
-        if self.saving_status_file_prefix in self.output_file_name_prefix:
-            raise Exception('The saving status file prefix ({}) can be a sub-name of output file name ({})',
-                            self.saving_status_file_prefix, self.output_file_name_prefix)
+
         if verbose and logger is None:
             self.logger = self._create_and_configure_logger()
         elif verbose and logger is not None:
             self.logger = logger
 
-    def process(self, task: AbstractProcessingTask, inference=False) -> Data:
+    def process_task(self, task: AbstractProcessingTask, inference=False) -> DataPipeline:
         """
         Adds a new processing task
         """
@@ -92,7 +275,7 @@ class Data:
             self.inference_tasks.append(task)
         return self
 
-    def filter(self, task: AbstractFilterTask, inference=False) -> Data:
+    def filter_task(self, task: AbstractFilterTask, inference=False) -> DataPipeline:
         """
         Adds a new filtering task
         """
@@ -102,7 +285,7 @@ class Data:
             self.inference_tasks.append(task)
         return self
 
-    def reduce(self, task: AbstractFilterTask) -> Data:
+    def reduce_task(self, task: AbstractFilterTask) -> DataPipeline:
         """
         Adds a new reducing task
         """
@@ -110,7 +293,7 @@ class Data:
         self.reduce_tasks.append(task)
         return self
 
-    def balance(self, task: AbstractBalancingTask) -> Data:
+    def balance_task(self, task: AbstractBalancingTask) -> DataPipeline:
         """
         Adds a new balancing task
         """
@@ -118,7 +301,7 @@ class Data:
         self.tasks.append(task)
         return self
 
-    def flatten(self) -> Data:
+    def flatten(self) -> DataPipeline:
         """
         Adds a new flattened task
         """
@@ -196,10 +379,7 @@ class Data:
         return adjusted_cat_and_subcat_dict
 
     def _execute_pipeline(self, execution_groups) -> list:
-        data_list = []
-        for eg in execution_groups:
-            df = pd.read_csv(eg[0], skiprows=eg[1], nrows=eg[2], usecols=eg[3]).fillna('')
-            data_list += df.to_dict('records')
+        data_list = self.reader.read_data_chunks(execution_groups)
         assert len(self.tasks) > 0
         for t_iter, task in enumerate(self.tasks):
             if task.type() == TaskType.BALANCING:
@@ -222,42 +402,14 @@ class Data:
             else:
                 data_list = elements
         if len(data_list) > 0:
-            self._save(data_list, self.output_data_dir_path, self.output_file_name_prefix)
+            self.saver.save(data_list)
         if len(self.reduce_tasks) > 0 and len(data_list) > 0:
             return self._validate_and_reduce_locally(data_list)
         else:
             return []
 
-    def _generate_file_path(self, output_data_dir, output_file_name_prefix, pid, file_nr) -> str:
-        return os.path.join(output_data_dir, '{}_{}_{}.csv'.format(output_file_name_prefix, pid, file_nr))
-
-    def _save(self, data, output_data_dir, output_file_name_prefix) -> None:
-        pid = os.getpid()
-        saving_status_file_path = '{}/{}_{}'.format(output_data_dir, self.saving_status_file_prefix, pid)
-        last_file_path = None
-        remaining = 0
-        if os.path.isfile(saving_status_file_path):
-            with open(saving_status_file_path, 'r') as f:
-                last_file_path, last_file_items_str = f.readline().split(';')
-                last_file_items = int(last_file_items_str)
-                remaining = self.output_file_size - last_file_items
-        if last_file_path and remaining > 0:
-            self._save_to_csv(data[:remaining], last_file_path, encoding='utf-8', header=False)
-            last_file_items+=remaining
-
-        if len(data) > remaining:
-            for data_part in self._chunk_by_n_rows(data[remaining:], self.output_file_size):
-                next_file_nr = len(
-                    glob.glob(self._generate_file_path(output_data_dir, output_file_name_prefix, pid, '*'))) + 1
-                file_path = self._generate_file_path(output_data_dir, output_file_name_prefix, pid, next_file_nr)
-                self._save_to_csv(data_part, file_path, encoding='utf-8', header=True)
-                last_file_path = file_path
-                last_file_items = len(data_part)
-        with open(saving_status_file_path, 'w') as f:
-            f.writelines(['{};{}'.format(last_file_path, last_file_items)])
-
     def _clean_savings_statuses(self, output_data_dir) -> None:
-        saving_status_generic_file_path = '{}/{}_{}'.format(output_data_dir, self.saving_status_file_prefix, '*')
+        saving_status_generic_file_path = '{}/{}_{}'.format(output_data_dir, self.saver.saving_status_file_prefix, '*')
         for file_path in glob.glob(saving_status_generic_file_path):
             os.remove(file_path)
 
@@ -311,14 +463,6 @@ class Data:
             local_reduction[task.reduced_value_name] = reduced_locally_value
         return local_reduction
 
-    def _save_to_csv(self, data_list, file_path, header, encoding, mode='a') -> None:
-        keys = data_list[0].keys()
-        with open(file_path, mode, encoding=encoding) as output_file:
-            dict_writer = csv.DictWriter(output_file, keys,quoting=csv.QUOTE_ALL)
-            if header:
-                dict_writer.writeheader()
-            dict_writer.writerows(data_list)
-
     def _chunk_by_n_parts(self, data_list, num) -> list:
         avg = len(data_list) / float(num)
         out = []
@@ -327,9 +471,6 @@ class Data:
             out.append(data_list[int(last):int(last + avg)])
             last += avg
         return out
-
-    def _chunk_by_n_rows(self, data_list, size) -> tuple:
-        return (data_list[pos:pos + size] for pos in range(0, len(data_list), size))
 
     def gen_chunks(self, reader, chunksize) -> Iterator[list]:
         """
@@ -364,35 +505,6 @@ class Data:
             else:
                 raise Exception("File extension {} not supported".format(self.output_metadata_file_format))
 
-    def _calculate_lines(self, path) -> int:
-        with open(path, 'r', encoding='utf-8') as f:
-            first_key = next(csv.reader(f))[0]
-        df_iter = pd.read_csv(path, usecols=[first_key], chunksize=self.processing_chunk_size)
-        for i, df in enumerate(df_iter):
-            continue
-        return self.processing_chunk_size * i + df.shape[0]
-
-    def _prepare_chunked_execution_groups(self, all_file_paths, pool, chunksize, input_columns) -> list:
-        counts = pool.map(self._calculate_lines, all_file_paths)
-        execution_groups = []
-        remaining = 0
-        for file, no_elements in zip(all_file_paths, counts):
-            buffer_level = 0
-            if remaining > 0:
-                execution_groups[-1].append((file, range(0), min(remaining, no_elements), input_columns))
-                remaining = min(remaining, no_elements)
-                buffer_level = min(remaining, no_elements)
-
-            while buffer_level != no_elements:
-                if buffer_level + chunksize <= no_elements:
-                    execution_groups.append([(file, range(1, buffer_level), chunksize, input_columns)])
-                    buffer_level += chunksize
-                else:
-                    execution_groups.append([(file, range(1, buffer_level), no_elements - buffer_level, input_columns)])
-                    remaining = chunksize - (no_elements - buffer_level)
-                    buffer_level += (no_elements - buffer_level)
-        return execution_groups
-
     def shift(self) -> None:
         """
         Performs processing of the dataset according to the created pipeline.
@@ -404,27 +516,24 @@ class Data:
             raise AssertionError(
                 "You have defined {} tasks to reduce but a file name for reduce output is still not defined.".format(
                     len(self.reduce_tasks)))
-        if self.output_data_dir_path and not os.path.exists(self.output_data_dir_path):
-            os.makedirs(self.output_data_dir_path)
         pool = Pool(self.num_workers)
-        all_file_paths = glob.glob(self.input_data_path_pattern)
-        if not all_file_paths:
-            raise FileNotFoundError('Files were not found in the location : {}'.format(self.input_data_path_pattern))
-        self._print_logs(
-            'Localized {} files to be shifted from {} to {}.'.format(len(all_file_paths), self.input_data_path_pattern,
-                                                                     self.output_data_dir_path))
+        # all_file_paths = glob.glob(self.input_data_path_pattern)
+        # if not all_file_paths:
+        #     raise FileNotFoundError('Files were not found in the location : {}'.format(self.input_data_path_pattern))
+        # self._print_logs(
+        #    'Localized {} files to be shifted from {} to {}.'.format(len(all_file_paths), self.input_data_path_pattern,
+        #                                                             self.output_data_dir_path))
         self._print_logs(
             'Data scanning and generation of data chunks for multi-threaded execution. This may take a while...')
-        execution_groups = self._prepare_chunked_execution_groups(all_file_paths, pool, self.processing_chunk_size,
-                                                                  self.input_columns)
+        execution_groups = self.reader.determine_chunked_execution_groups(pool, self.processing_chunk_size)
         self._print_logs(
             'Created {} execution chunks for multi-threaded execution. Each chunk contains {} elements/observations.'.format(
                 len(execution_groups), self.processing_chunk_size))
         self._print_logs('Processing has started...')
         local_reductions = pool.map(self._execute_pipeline, execution_groups)
         self._print_logs('Processing completed. {} output files saved to {}.'.format(len(execution_groups),
-                                                                                     self.output_data_dir_path))
-        self._clean_savings_statuses(self.output_data_dir_path)
+                                                                                     self.saver.output_data_dir_path))
+        self._clean_savings_statuses(self.saver.output_data_dir_path)
         if len(self.reduce_tasks) > 0:
             self._print_logs('Metadata generation has started...')
             local_reductions = [lr for lr in local_reductions if lr is not None]
@@ -435,14 +544,15 @@ class Data:
             self._print_logs(
                 'Metadata generation completed. Statistics saved to {}.'.format(self.output_metadata_file_path))
         self._print_logs(
-            'Data from {} SUCCESSFULLY shifted to {}!'.format(self.input_data_path_pattern, self.output_data_dir_path))
+            'Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
+                                                              self.saver.output_data_dir_path))
         pool.close()
 
     def inference(self, data):
         for inference_task in self.inference_tasks:
-            if inference_task.type()==TaskType.PROCESSOR:
-                data=inference_task.process(data)
-            elif inference_task.type()==TaskType.FILTER and not inference_task.filter(data):
+            if inference_task.type() == TaskType.PROCESSOR:
+                data = inference_task.process(data)
+            elif inference_task.type() == TaskType.FILTER and not inference_task.filter(data):
                 return None
             else:
                 raise Exception('Unsupported task for inference {}.'.format(inference_task.type()))

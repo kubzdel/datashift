@@ -1,4 +1,4 @@
 from .task import AbstractProcessingTask, AbstractBalancingTask, AbstractFilterTask, AbstractReduceTask
-from .dataset import Data
+from .datapipeline import DataPipeline
 
-__version__ = "0.0.3"
+__version__ = "0.1.0"
