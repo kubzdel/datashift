@@ -26,7 +26,6 @@ setup(
     packages=find_packages(),
     install_requires=[
         'certifi==2020.12.5',
-        'dill==0.3.3',
         'multiprocess==0.70.11.1',
         'numpy==1.20.1',
         'pandas==1.2.2',
