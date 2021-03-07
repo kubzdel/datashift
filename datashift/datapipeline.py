@@ -537,7 +537,7 @@ class DataPipeline:
             self._clean_savings_statuses(self.saver.output_data_dir_path)
         if len(self._get_reduce_tasks()) > 0:
             self._print_logs('Metadata generation has started...')
-            local_reductions = [lr for lr in local_reductions if lr is not None]
+            local_reductions = [lr for lr in local_reductions if lr is not None and len(lr)>0]
             global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions]) for task in self._get_reduce_tasks()]
             global_reductions = pool.map(self._reduce_globally, global_reduction_tasks)
             self._save_reduced(global_reductions)
