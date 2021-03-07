@@ -246,7 +246,6 @@ class DataPipeline:
                  output_metadata_file_format='yaml', verbose=True,
                  logger=None):
         self.flattened_steps = []
-        self.reduce_tasks = []
         assert output_metadata_file_format == 'yaml' or output_metadata_file_format == 'json' 'Only yaml and json files are supported to save reduced values.'
         self.num_workers = num_workers if num_workers is not None else multiprocessing.cpu_count() - 1
         self.reader = reader
@@ -290,7 +289,7 @@ class DataPipeline:
         Adds a new reducing task
         """
         assert task.type() == TaskType.REDUCER
-        self.reduce_tasks.append(task)
+        self.tasks.append(task)
         return self
 
     def balance_task(self, task: AbstractBalancingTask) -> DataPipeline:
@@ -309,6 +308,9 @@ class DataPipeline:
             raise Exception(self._FLATTEN_ORDER_EXCEPTION)
         self.flattened_steps.append(len(self.tasks))
         return self
+
+    def _get_reduce_tasks(self):
+        return [task for task in self.tasks if task.type()==TaskType.REDUCER]
 
     def _create_and_configure_logger(self):
         logger = logging.getLogger('')
@@ -379,32 +381,36 @@ class DataPipeline:
         return adjusted_cat_and_subcat_dict
 
     def _execute_pipeline(self, execution_groups) -> list:
+        local_reductions = {}
         data_list = self.reader.read_data_chunks(execution_groups)
         assert len(self.tasks) > 0
         for t_iter, task in enumerate(self.tasks):
-            if task.type() == TaskType.BALANCING:
-                balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
-            elements = []
-            for data in data_list:
-                if task.type() == TaskType.PROCESSOR:
-                    elements.append(task.process(data))
-                elif task.type() == TaskType.FILTER and task.filter(data):
-                    elements.append(data)
-                elif task.type() == TaskType.BALANCING:
-                    selected_categories = self._calculate_if_given_sample_should_be_selected(data, task,
-                                                                                             balancing_probabilities)
-                    if selected_categories:
-                        task.mark_sample_as_selected(data, selected_categories)
-                        elements.append(data)
-
-            if t_iter + 1 in self.flattened_steps:
-                data_list = [item for sublist in elements for item in sublist]
+            if task.type() == TaskType.REDUCER and len(data_list) > 0:
+                self._validate_and_reduce_locally(task,data_list, local_reductions)
             else:
-                data_list = elements
-        if len(data_list) > 0:
+                if task.type() == TaskType.BALANCING:
+                    balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
+                elements = []
+                for data in data_list:
+                    if task.type() == TaskType.PROCESSOR:
+                        elements.append(task.process(data))
+                    elif task.type() == TaskType.FILTER and task.filter(data):
+                        elements.append(data)
+                    elif task.type() == TaskType.BALANCING:
+                        selected_categories = self._calculate_if_given_sample_should_be_selected(data, task,
+                                                                                                 balancing_probabilities)
+                        if selected_categories:
+                            task.mark_sample_as_selected(data, selected_categories)
+                            elements.append(data)
+
+                if t_iter + 1 in self.flattened_steps:
+                    data_list = [item for sublist in elements for item in sublist]
+                else:
+                    data_list = elements
+        if len(data_list) > 0 and self.saver is not None:
             self.saver.save(data_list)
-        if len(self.reduce_tasks) > 0 and len(data_list) > 0:
-            return self._validate_and_reduce_locally(data_list)
+        if len(local_reductions) > 0:
+            return local_reductions
         else:
             return []
 
@@ -446,22 +452,18 @@ class DataPipeline:
                     cat_and_subcat[category][distribution_subcategory] += 1
         return cat_and_subcat
 
-    def _validate_and_reduce_locally(self, data_list) -> dict:
-        local_reduction = {}
-        assert len(self.reduce_tasks) > 0
-        for task in self.reduce_tasks:
-            reduced_locally_value = task.reduce_locally(data_list)
-            if type(reduced_locally_value) not in (float, int, str, dict):
-                raise TypeError("Final value of the reduced chunk must be dict, float, int or str, not {}.".format(
-                    type(reduced_locally_value)))
-            if type(reduced_locally_value) == dict:
-                for v in reduced_locally_value.values():
-                    if type(v) not in (float, int, str):
-                        raise TypeError(
-                            "All values in the dictionary creaded during chunk reduction must be str, float or int, not {}.".format(
-                                type(v)))
-            local_reduction[task.reduced_value_name] = reduced_locally_value
-        return local_reduction
+    def _validate_and_reduce_locally(self, task, data_list, local_reductions) -> dict:
+        reduced_locally_value = task.reduce_locally(data_list)
+        if type(reduced_locally_value) not in (float, int, str, dict):
+            raise TypeError("Final value of the reduced chunk must be dict, float, int or str, not {}.".format(
+                type(reduced_locally_value)))
+        if type(reduced_locally_value) == dict:
+            for v in reduced_locally_value.values():
+                if type(v) not in (float, int, str):
+                    raise TypeError(
+                        "All values in the dictionary creaded during chunk reduction must be str, float or int, not {}.".format(
+                            type(v)))
+        local_reductions[task.reduced_value_name] = reduced_locally_value
 
     def _chunk_by_n_parts(self, data_list, num) -> list:
         avg = len(data_list) / float(num)
@@ -510,12 +512,13 @@ class DataPipeline:
         Performs processing of the dataset according to the created pipeline.
         """
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
-        if len(self.reduce_tasks) == 0 and self.output_metadata_file_path is not None:
+        if len(self._get_reduce_tasks()) == 0 and self.output_metadata_file_path is not None:
             raise AssertionError("You have defined a file name for reduce output but there is no task to reduce.")
-        if len(self.reduce_tasks) > 0 and self.output_metadata_file_path is None:
+        if len(self._get_reduce_tasks()) > 0 and self.output_metadata_file_path is None:
             raise AssertionError(
-                "You have defined {} tasks to reduce but a file name for reduce output is still not defined.".format(
-                    len(self.reduce_tasks)))
+                "You have defined {} tasks to reduce but a file name for reduce output is still not defined.".format(len(self._get_reduce_tasks())))
+        if self.saver is None and len(self._get_reduce_tasks()) == 0:
+            raise AssertionError("Please add a saver to save data or/and reduction tasks and reduction output file to reduce data.")
         pool = Pool(self.num_workers)
         # all_file_paths = glob.glob(self.input_data_path_pattern)
         # if not all_file_paths:
@@ -531,20 +534,20 @@ class DataPipeline:
                 len(execution_groups), self.processing_chunk_size))
         self._print_logs('Processing has started...')
         local_reductions = pool.map(self._execute_pipeline, execution_groups)
-        self._print_logs('Processing completed. {} output files saved to {}.'.format(len(execution_groups),
+        if self.saver is not None:
+            self._print_logs('Processing completed. {} output files saved to {}.'.format(len(execution_groups),
                                                                                      self.saver.output_data_dir_path))
-        self._clean_savings_statuses(self.saver.output_data_dir_path)
-        if len(self.reduce_tasks) > 0:
+            self._clean_savings_statuses(self.saver.output_data_dir_path)
+        if len(self._get_reduce_tasks()) > 0:
             self._print_logs('Metadata generation has started...')
             local_reductions = [lr for lr in local_reductions if lr is not None]
-            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions]) for task in
-                                      self.reduce_tasks]
+            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions]) for task in self._get_reduce_tasks()]
             global_reductions = pool.map(self._reduce_globally, global_reduction_tasks)
             self._save_reduced(global_reductions)
             self._print_logs(
                 'Metadata generation completed. Statistics saved to {}.'.format(self.output_metadata_file_path))
-        self._print_logs(
-            'Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
+        if self.saver is not None:
+            self._print_logs('Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
                                                               self.saver.output_data_dir_path))
         pool.close()
 
