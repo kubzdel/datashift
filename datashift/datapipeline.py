@@ -69,23 +69,24 @@ class AbstractFileReader(AbstractReader):
         all_file_paths = glob.glob(self.input_data_path_pattern)
         number_of_items_per_file = pool.map(self._no_items_in_one_file, [(path, chunk_size) for path in all_file_paths])
         execution_groups = []
-        remaining_to_full_chunk = 0
+        remaining_to_full_chunk = chunk_size
         for file, no_elements in zip(all_file_paths, number_of_items_per_file):
             buffer_level = 0
             if remaining_to_full_chunk > 0:
-                execution_groups[-1].append((file, buffer_level, min(remaining_to_full_chunk, no_elements)))
-                remaining_to_full_chunk -= min(remaining_to_full_chunk, no_elements)
-                buffer_level = min(remaining_to_full_chunk, no_elements)
+                current_chunk_size=min(remaining_to_full_chunk, no_elements)
+                execution_groups[-1].append((file, buffer_level, current_chunk_size))
+                buffer_level+=current_chunk_size
+                remaining_to_full_chunk -= current_chunk_size
 
             while buffer_level != no_elements:
                 if buffer_level + chunk_size <= no_elements:
                     execution_groups.append([(file, buffer_level, chunk_size)])
                     buffer_level += chunk_size
-                    remaining_to_full_chunk=0
+                    remaining_to_full_chunk-=chunk_size
                 else:
                     execution_groups.append([(file, buffer_level, no_elements - buffer_level)])
                     buffer_level += (no_elements - buffer_level)
-                    remaining_to_full_chunk = chunk_size - buffer_level
+                    remaining_to_full_chunk -= (no_elements - buffer_level)
 
         return execution_groups
 
