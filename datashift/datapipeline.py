@@ -71,21 +71,22 @@ class AbstractFileReader(AbstractReader):
         execution_groups = []
         remaining_to_full_chunk = 0
         for file, no_elements in zip(all_file_paths, number_of_items_per_file):
-            remining_to_read = 0
+            buffer_level = 0
             if remaining_to_full_chunk > 0:
-                execution_groups[-1].append((file, remining_to_read, min(remaining_to_full_chunk, no_elements)))
+                execution_groups[-1].append((file, buffer_level, min(remaining_to_full_chunk, no_elements)))
                 remaining_to_full_chunk -= min(remaining_to_full_chunk, no_elements)
-                remining_to_read = min(remaining_to_full_chunk, no_elements)
+                buffer_level = min(remaining_to_full_chunk, no_elements)
 
-            while remining_to_read != no_elements:
-                if remining_to_read + chunk_size <= no_elements:
-                    execution_groups.append([(file, remining_to_read, chunk_size)])
-                    remining_to_read += chunk_size
+            while buffer_level != no_elements:
+                if buffer_level + chunk_size <= no_elements:
+                    execution_groups.append([(file, buffer_level, chunk_size)])
+                    buffer_level += chunk_size
                     remaining_to_full_chunk=0
                 else:
-                    execution_groups.append([(file, no_elements - remining_to_read, remining_to_read)])
-                    remaining_to_full_chunk = chunk_size - (no_elements - remining_to_read)
-                    remining_to_read += (no_elements - remining_to_read)
+                    execution_groups.append([(file, buffer_level, no_elements - buffer_level)])
+                    buffer_level += (no_elements - buffer_level)
+                    remaining_to_full_chunk = chunk_size - buffer_level
+
         return execution_groups
 
     def read_data_chunks(self, execution_groups):
