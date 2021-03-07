@@ -241,7 +241,7 @@ class DataPipeline:
 
     _FLATTEN_ORDER_EXCEPTION = "The flatten task can only be executed after a processing stage. Currently the are no processing tasks assigned"
 
-    def __init__(self, reader, saver,
+    def __init__(self, reader, saver=None,
                  processing_chunk_size=20000, num_workers=None, output_metadata_file_path=None,
                  output_metadata_file_format='yaml', verbose=True,
                  logger=None):
@@ -409,10 +409,7 @@ class DataPipeline:
                     data_list = elements
         if len(data_list) > 0 and self.saver is not None:
             self.saver.save(data_list)
-        if len(local_reductions) > 0:
-            return local_reductions
-        else:
-            return []
+        return local_reductions
 
     def _clean_savings_statuses(self, output_data_dir) -> None:
         saving_status_generic_file_path = '{}/{}_{}'.format(output_data_dir, self.saver.saving_status_file_prefix, '*')
