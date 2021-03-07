@@ -24,6 +24,9 @@ class _AbstractTask(ABC):
         """
         pass
 
+    def chunk_size(self):
+        return 1
+
 
 class AbstractFilterTask(_AbstractTask):
     """
