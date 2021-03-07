@@ -559,7 +559,7 @@ class DataPipeline:
             self._print_logs('Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
                                                               self.saver.output_data_dir_path))
         pool.close()
-        return global_reductions if global_reductions is None else global_reductions[1]
+        return global_reductions
 
     def inference(self, data):
         for inference_task in self.inference_tasks:
