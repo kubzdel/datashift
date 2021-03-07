@@ -74,7 +74,7 @@ class AbstractFileReader(AbstractReader):
             buffer_level = 0
             if remaining > 0:
                 execution_groups[-1].append((file, buffer_level, min(remaining, no_elements)))
-                remaining = min(remaining, no_elements)
+                remaining -= min(remaining, no_elements)
                 buffer_level = min(remaining, no_elements)
 
             while buffer_level != no_elements:
