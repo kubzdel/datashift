@@ -79,6 +79,7 @@ class AbstractFileReader(AbstractReader):
                 remaining_to_full_chunk -= current_chunk_size
 
             while buffer_level != no_elements:
+                remaining_to_full_chunk = chunk_size
                 if buffer_level + chunk_size <= no_elements:
                     execution_groups.append([(file, buffer_level, chunk_size)])
                     buffer_level += chunk_size
