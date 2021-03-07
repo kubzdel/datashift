@@ -454,12 +454,6 @@ class DataPipeline:
         if type(reduced_locally_value) not in (float, int, str, dict):
             raise TypeError("Final value of the reduced chunk must be dict, float, int or str, not {}.".format(
                 type(reduced_locally_value)))
-        if type(reduced_locally_value) == dict:
-            for v in reduced_locally_value.values():
-                if type(v) not in (float, int, str):
-                    raise TypeError(
-                        "All values in the dictionary creaded during chunk reduction must be str, float or int, not {}.".format(
-                            type(v)))
         local_reductions[task.reduced_value_name] = reduced_locally_value
 
     def _chunk_by_n_parts(self, data_list, num) -> list:
