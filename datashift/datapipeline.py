@@ -408,7 +408,7 @@ class DataPipeline:
                 if task.type() == TaskType.BALANCING:
                     balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
                 elements = []
-                for data in self.gen_chunks(data_list,task.chunk_size()):
+                for data in self.gen_chunks(data_list,task.chunk_size()) if task.chunk_size()>1 else data_list:
                     if task.type() == TaskType.PROCESSOR:
                         elements.append(task.process(data))
                     elif task.type() == TaskType.FILTER and task.filter(data):
