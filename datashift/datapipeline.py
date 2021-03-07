@@ -72,7 +72,7 @@ class AbstractFileReader(AbstractReader):
         remaining_to_full_chunk = chunk_size
         for file, no_elements in zip(all_file_paths, number_of_items_per_file):
             buffer_level = 0
-            if remaining_to_full_chunk > 0:
+            if remaining_to_full_chunk > 0 and buffer_level>0:
                 current_chunk_size=min(remaining_to_full_chunk, no_elements)
                 execution_groups[-1].append((file, buffer_level, current_chunk_size))
                 buffer_level+=current_chunk_size
