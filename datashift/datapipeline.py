@@ -502,6 +502,7 @@ class DataPipeline:
         """
         Performs processing of the dataset according to the created pipeline.
         """
+        global_reductions=None
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
         if len(self._get_reduce_tasks()) == 0 and self.output_metadata_file_path is not None:
             raise AssertionError("You have defined a file name for reduce output but there is no task to reduce.")
@@ -541,6 +542,7 @@ class DataPipeline:
             self._print_logs('Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
                                                               self.saver.output_data_dir_path))
         pool.close()
+        return global_reductions
 
     def inference(self, data):
         for inference_task in self.inference_tasks:
