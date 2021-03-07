@@ -426,7 +426,7 @@ class DataPipeline:
                     data_list = elements
         if len(data_list) > 0 and self.saver is not None:
             self.saver.save(data_list)
-        return local_reductions if local_reductions is None else local_reductions[1] #TODO improvement needed
+        return local_reductions
 
     def _clean_savings_statuses(self, output_data_dir) -> None:
         saving_status_generic_file_path = '{}/{}_{}'.format(output_data_dir, self.saver.saving_status_file_prefix, '*')
@@ -559,7 +559,7 @@ class DataPipeline:
             self._print_logs('Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
                                                               self.saver.output_data_dir_path))
         pool.close()
-        return global_reductions
+        return global_reductions if global_reductions is None else global_reductions[1]
 
     def inference(self, data):
         for inference_task in self.inference_tasks:
