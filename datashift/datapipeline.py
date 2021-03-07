@@ -426,7 +426,7 @@ class DataPipeline:
                     data_list = elements
         if len(data_list) > 0 and self.saver is not None:
             self.saver.save(data_list)
-        return local_reductions
+        return local_reductions if local_reductions is None else local_reductions[1] #TODO improvement needed
 
     def _clean_savings_statuses(self, output_data_dir) -> None:
         saving_status_generic_file_path = '{}/{}_{}'.format(output_data_dir, self.saver.saving_status_file_prefix, '*')
