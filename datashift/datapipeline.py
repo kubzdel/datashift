@@ -85,9 +85,8 @@ class AbstractFileReader(AbstractReader):
                     remaining_to_full_chunk-=chunk_size
                 else:
                     execution_groups.append([(file, buffer_level, no_elements - buffer_level)])
-                    buffer_level += (no_elements - buffer_level)
                     remaining_to_full_chunk -= (no_elements - buffer_level)
-
+                    buffer_level += (no_elements - buffer_level)
         return execution_groups
 
     def read_data_chunks(self, execution_groups):
