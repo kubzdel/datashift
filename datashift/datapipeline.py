@@ -45,7 +45,7 @@ class DefaultListReader(AbstractReader):
         return execution_groups
 
     def read_data_chunks(self, execution_groups):
-        return self.data_list[execution_groups[0],execution_groups[0]+execution_groups[1]]
+        return self.data_list[execution_groups[0]:execution_groups[0]+execution_groups[1]]
 
 
 class AbstractFileReader(AbstractReader):
