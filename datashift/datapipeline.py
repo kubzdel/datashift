@@ -69,22 +69,23 @@ class AbstractFileReader(AbstractReader):
         all_file_paths = glob.glob(self.input_data_path_pattern)
         number_of_items_per_file = pool.map(self._no_items_in_one_file, [(path, chunk_size) for path in all_file_paths])
         execution_groups = []
-        remaining = 0
+        remaining_to_full_chunk = 0
         for file, no_elements in zip(all_file_paths, number_of_items_per_file):
-            buffer_level = 0
-            if remaining > 0:
-                execution_groups[-1].append((file, buffer_level, min(remaining, no_elements)))
-                remaining -= min(remaining, no_elements)
-                buffer_level = min(remaining, no_elements)
+            remining_to_read = 0
+            if remaining_to_full_chunk > 0:
+                execution_groups[-1].append((file, remining_to_read, min(remaining_to_full_chunk, no_elements)))
+                remaining_to_full_chunk -= min(remaining_to_full_chunk, no_elements)
+                remining_to_read = min(remaining_to_full_chunk, no_elements)
 
-            while buffer_level != no_elements:
-                if buffer_level + chunk_size <= no_elements:
-                    execution_groups.append([(file, buffer_level, chunk_size)])
-                    buffer_level += chunk_size
+            while remining_to_read != no_elements:
+                if remining_to_read + chunk_size <= no_elements:
+                    execution_groups.append([(file, remining_to_read, chunk_size)])
+                    remining_to_read += chunk_size
+                    remaining_to_full_chunk=0
                 else:
-                    execution_groups.append([(file, buffer_level, no_elements - buffer_level)])
-                    remaining = chunk_size - (no_elements - buffer_level)
-                    buffer_level += (no_elements - buffer_level)
+                    execution_groups.append([(file, no_elements - remining_to_read, remining_to_read)])
+                    remaining_to_full_chunk = chunk_size - (no_elements - remining_to_read)
+                    remining_to_read += (no_elements - remining_to_read)
         return execution_groups
 
     def read_data_chunks(self, execution_groups):
