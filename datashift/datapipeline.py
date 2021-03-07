@@ -40,7 +40,7 @@ class DefaultListReader(AbstractReader):
         last_pos=0
         data_list_len=len(self.data_list)
         while last_pos<=data_list_len:
-            execution_groups.append(last_pos,min(chunksize,data_list_len-last_pos))
+            execution_groups.append((last_pos,min(chunksize,data_list_len-last_pos)))
             last_pos+=chunksize
         return execution_groups
 
