@@ -31,6 +31,23 @@ class AbstractReader(ABC):
         raise NotImplementedError("Method not implemented!")
 
 
+class DefaultListReader(AbstractReader):
+    def __init__(self,data_list):
+        self.data_list=data_list
+
+    def determine_chunked_execution_groups(self, pool, chunksize):
+        execution_groups=[]
+        last_pos=0
+        data_list_len=len(self.data_list)
+        while last_pos<=data_list_len:
+            execution_groups.append(last_pos,min(chunksize,data_list_len-last_pos))
+            last_pos+=chunksize
+        return execution_groups
+
+    def read_data_chunks(self, execution_groups):
+        return self.data_list[execution_groups[0],execution_groups[0]+execution_groups[1]]
+
+
 class AbstractFileReader(AbstractReader):
     def __init__(self, input_data_path_pattern):
         self.input_data_path_pattern = input_data_path_pattern
