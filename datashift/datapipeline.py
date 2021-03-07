@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import glob
 import json
+import time
 import logging
 import math
 import multiprocessing
@@ -398,6 +399,7 @@ class DataPipeline:
         return adjusted_cat_and_subcat_dict
 
     def _execute_pipeline(self, execution_groups) -> list:
+        start_time=time.time()
         local_reductions = {}
         data_list = self.reader.read_data_chunks(execution_groups)
         assert len(self.tasks) > 0
@@ -427,6 +429,7 @@ class DataPipeline:
                     data_list = elements
         if len(data_list) > 0 and self.saver is not None:
             self.saver.save(data_list)
+        self.logger.info("Finished execution group in {}s    {}".format(time.time()-start_time,execution_groups))
         return local_reductions
 
     def _clean_savings_statuses(self, output_data_dir) -> None:
