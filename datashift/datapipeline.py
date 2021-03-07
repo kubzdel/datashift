@@ -32,20 +32,20 @@ class AbstractReader(ABC):
 
 
 class DefaultListReader(AbstractReader):
-    def __init__(self,data_list):
-        self.data_list=data_list
+    def __init__(self, data_list):
+        self.data_list = data_list
 
     def determine_chunked_execution_groups(self, pool, chunksize):
-        execution_groups=[]
-        last_pos=0
-        data_list_len=len(self.data_list)
-        while last_pos<=data_list_len:
-            execution_groups.append((last_pos,min(chunksize,data_list_len-last_pos)))
-            last_pos+=chunksize
+        execution_groups = []
+        last_pos = 0
+        data_list_len = len(self.data_list)
+        while last_pos <= data_list_len:
+            execution_groups.append((last_pos, min(chunksize, data_list_len - last_pos)))
+            last_pos += chunksize
         return execution_groups
 
     def read_data_chunks(self, execution_groups):
-        return self.data_list[execution_groups[0]:execution_groups[0]+execution_groups[1]]
+        return self.data_list[execution_groups[0]:execution_groups[0] + execution_groups[1]]
 
 
 class AbstractFileReader(AbstractReader):
@@ -327,7 +327,7 @@ class DataPipeline:
         return self
 
     def _get_reduce_tasks(self):
-        return [task for task in self.tasks if task.type()==TaskType.REDUCER]
+        return [task for task in self.tasks if task.type() == TaskType.REDUCER]
 
     def _create_and_configure_logger(self):
         logger = logging.getLogger('')
@@ -403,12 +403,13 @@ class DataPipeline:
         assert len(self.tasks) > 0
         for t_iter, task in enumerate(self.tasks):
             if task.type() == TaskType.REDUCER and len(data_list) > 0:
-                self._validate_and_reduce_locally(task,data_list, local_reductions)
+                self._validate_and_reduce_locally(task, data_list, local_reductions)
             else:
                 if task.type() == TaskType.BALANCING:
                     balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
                 elements = []
-                for data in self.gen_chunks(data_list,task.chunk_size()) if task.chunk_size()>1 else data_list:
+                for data in self.gen_chunks(data_list,
+                                            task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
                     if task.type() == TaskType.PROCESSOR:
                         elements.append(task.process(data))
                     elif task.type() == TaskType.FILTER and task.filter(data):
@@ -519,15 +520,17 @@ class DataPipeline:
         """
         Performs processing of the dataset according to the created pipeline.
         """
-        global_reductions=None
+        global_reductions = None
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
         if len(self._get_reduce_tasks()) == 0 and self.output_metadata_file_path is not None:
             raise AssertionError("You have defined a file name for reduce output but there is no task to reduce.")
         if len(self._get_reduce_tasks()) > 0 and self.output_metadata_file_path is None:
             raise AssertionError(
-                "You have defined {} tasks to reduce but a file name for reduce output is still not defined.".format(len(self._get_reduce_tasks())))
+                "You have defined {} tasks to reduce but a file name for reduce output is still not defined.".format(
+                    len(self._get_reduce_tasks())))
         if self.saver is None and len(self._get_reduce_tasks()) == 0:
-            raise AssertionError("Please add a saver to save data or/and reduction tasks and reduction output file to reduce data.")
+            raise AssertionError(
+                "Please add a saver to save data or/and reduction tasks and reduction output file to reduce data.")
         pool = Pool(self.num_workers)
         # all_file_paths = glob.glob(self.input_data_path_pattern)
         # if not all_file_paths:
@@ -545,19 +548,20 @@ class DataPipeline:
         local_reductions = pool.map(self._execute_pipeline, execution_groups)
         if self.saver is not None:
             self._print_logs('Processing completed. {} output files saved to {}.'.format(len(execution_groups),
-                                                                                     self.saver.output_data_dir_path))
+                                                                                         self.saver.output_data_dir_path))
             self._clean_savings_statuses(self.saver.output_data_dir_path)
         if len(self._get_reduce_tasks()) > 0:
             self._print_logs('Metadata generation has started...')
-            local_reductions = [lr for lr in local_reductions if lr is not None and len(lr)>0]
-            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions]) for task in self._get_reduce_tasks()]
+            local_reductions = [lr for lr in local_reductions if lr is not None and len(lr) > 0]
+            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions]) for task in
+                                      self._get_reduce_tasks()]
             global_reductions = pool.map(self._reduce_globally, global_reduction_tasks)
             self._save_reduced(global_reductions)
             self._print_logs(
                 'Metadata generation completed. Statistics saved to {}.'.format(self.output_metadata_file_path))
         if self.saver is not None:
             self._print_logs('Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
-                                                              self.saver.output_data_dir_path))
+                                                                               self.saver.output_data_dir_path))
         pool.close()
         return global_reductions
 

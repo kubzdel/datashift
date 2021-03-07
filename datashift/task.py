@@ -24,7 +24,7 @@ class _AbstractTask(ABC):
         """
         pass
 
-    def chunk_size(self):
+    def get_chunk_size(self):
         return 1
 
 
