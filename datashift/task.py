@@ -173,10 +173,12 @@ class AbstractBalancingTask(_AbstractTask):
         """
 
     def __init__(self, max_proportion_difference_category=1.0, max_proportion_difference_characteristic=1.0,
+                 characteristic_distribution=None,
                  selection_result_new_column_name='selected_distribution_categories',
                  selection_categories_separator=';'):
         self.max_proportion_difference_category = max_proportion_difference_category
         self.max_proportion_difference_characteristic = max_proportion_difference_characteristic
+        self.characteristic_distribution=characteristic_distribution
         self.selection_result_new_column_name = selection_result_new_column_name
         self.selection_categories_separator = selection_categories_separator
 

@@ -344,7 +344,8 @@ class DataPipeline:
     def _calculate_subcategories_probabilities(self, data_list, task: AbstractBalancingTask) -> dict:
         cat_and_subcat_dict = self._retrieve_and_validate_distribution_categories(data_list, task)
         adjusted_cat_and_subcat_dict = self._adjust_number_of_samples_per_subcategory(cat_and_subcat_dict,
-                                                                                      task.max_proportion_difference_characteristic)
+                                                                                      task.max_proportion_difference_characteristic,
+                                                                                      task.characteristic_distribution)
         adjusted_cat_and_subcat_dict = self._adjust_number_of_samples_per_category(adjusted_cat_and_subcat_dict,
                                                                                    task.max_proportion_difference_category)
         probabilities = {}
@@ -389,16 +390,22 @@ class DataPipeline:
         return values
 
     def _adjust_number_of_samples_per_subcategory(self, cat_and_subcat_dict,
-                                                  max_proportion_difference_subcategory) -> dict:
+                                                  max_proportion_difference_subcategory=None, characteristic_distribution=None) -> dict:
         adjusted_cat_and_subcat_dict = {}
         for cat, subcat in cat_and_subcat_dict.items():
             adjusted_cat_and_subcat_dict[cat] = {}
-            min_subcat = min(subcat.values()) * max_proportion_difference_subcategory
-            for subcat_name in subcat:
-                if subcat[subcat_name] > min_subcat:
-                    adjusted_cat_and_subcat_dict[cat][subcat_name] = min_subcat
-                else:
-                    adjusted_cat_and_subcat_dict[cat][subcat_name] = subcat[subcat_name]
+            if characteristic_distribution is None:
+                min_subcat = min(subcat.values()) * max_proportion_difference_subcategory
+                for subcat_name in subcat.keys():
+                    if subcat[subcat_name] > min_subcat:
+                        adjusted_cat_and_subcat_dict[cat][subcat_name] = min_subcat
+                    else:
+                        adjusted_cat_and_subcat_dict[cat][subcat_name] = subcat[subcat_name]
+            else:
+                to_be_characteristic={k:v*sum(subcat.values()) for k,v in characteristic_distribution.items()}
+                correction=min([subcat[k]/to_be_characteristic[k] for k in subcat.keys()])
+                for subcat_name in subcat.keys():
+                    adjusted_cat_and_subcat_dict[cat][subcat_name] = int(to_be_characteristic[subcat_name]*correction)
         return adjusted_cat_and_subcat_dict
 
     def _execute_pipeline(self, execution_groups) -> list:
