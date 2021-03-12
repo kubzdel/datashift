@@ -334,7 +334,7 @@ class DataPipeline:
         return [task for task in self.tasks if task.type() == TaskType.REDUCER]
 
     def _create_and_configure_logger(self):
-        logger = logging.getLogger('')
+        logger = logging.getLogger('datashift')
         logger.setLevel(logging.DEBUG)
         ch = logging.StreamHandler(sys.stdout)
         ch.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
@@ -414,6 +414,7 @@ class DataPipeline:
         data_list = self.reader.read_data_chunks(execution_groups)
         assert len(self.tasks) > 0
         for t_iter, task in enumerate(self.tasks):
+            task.setup()
             if task.type() == TaskType.REDUCER and len(data_list) > 0:
                 self._validate_and_reduce_locally(task, data_list, local_reductions)
             else:
@@ -437,6 +438,7 @@ class DataPipeline:
                     data_list = [item for sublist in elements for item in sublist]
                 else:
                     data_list = elements
+            task.teardown()
         if len(data_list) > 0 and self.saver is not None:
             self.saver.save(data_list)
         self.logger.info("Finished execution group in {}s    {}".format(time.time()-start_time,execution_groups))
