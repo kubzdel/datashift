@@ -67,9 +67,9 @@ class CountCategoriesTask(AbstractReduceTask):
                     result[c] += 1
         return result
 
-    def reduce_globally(self, reduced_chunks):
+    def reduce_globally(self, next_local_reduction_gen):
         results = {}
-        for local_reduction in reduced_chunks:
+        for local_reduction in next_local_reduction_gen():
             for k in local_reduction:
                 if k not in results:
                     results[k] = local_reduction[k]
@@ -92,9 +92,9 @@ class CountSubcategoriesPerCateogry(AbstractReduceTask):
                 result[sample['subcat']] += 1
         return result
 
-    def reduce_globally(self, reduced_chunks):
+    def reduce_globally(self, next_local_reduction_gen):
         results = {}
-        for local_reduction in reduced_chunks:
+        for local_reduction in next_local_reduction_gen():
             for k in local_reduction:
                 if k not in results:
                     results[k] = local_reduction[k]
@@ -111,8 +111,16 @@ class MeanValueReduceTask(AbstractReduceTask):
         values = [len(sample['comment_text'].split()) for sample in chunk_samples]
         return sum(values) / len(values)
 
-    def reduce_globally(self, reduced_chunks):
-        return sum(reduced_chunks) / len(reduced_chunks)
+    def reduce_globally(self, next_local_reduction_gen):
+        acc=None
+        iter=0
+        for local_reduction in next_local_reduction_gen():
+            if acc is None:
+                acc=local_reduction
+            else:
+                acc+=local_reduction
+        iter+=1
+        return acc/ iter
 
 
 class MaxValueReduceTask(AbstractReduceTask):

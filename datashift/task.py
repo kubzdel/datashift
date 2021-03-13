@@ -125,14 +125,14 @@ class AbstractReduceTask(_AbstractTask):
         return TaskType.REDUCER
 
     @abstractmethod
-    def reduce_locally(self, samples) -> Union[int, float, dict]:
+    def reduce_locally(self, samples):
         """
         Converts batch of samples/observations to a numeric value or dictionary.
         For one dataset, this method is executed multiple times, each time for a different data chunk.
         The results from local reductions are then passed directly to the global reduction, which is performed only once.
 
         Args:
-            samples (list[dict]): Observation list with all features
+            samples (list): Observation list with all features
 
         Returns:
             dict,int: Reduced value for a given data chunk
@@ -140,7 +140,7 @@ class AbstractReduceTask(_AbstractTask):
         pass
 
     @abstractmethod
-    def reduce_globally(self, local_reductions) -> Union[int, float, dict]:
+    def reduce_globally(self, next_local_reduction_gen):
         """
         Finally reduces the entire data set (using locally reduced chunks) to a single numeric value or dictionary.
 

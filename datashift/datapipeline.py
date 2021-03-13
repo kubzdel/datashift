@@ -13,6 +13,8 @@ from abc import abstractmethod, ABC
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Iterator
+import tempfile
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -408,9 +410,11 @@ class DataPipeline:
                     adjusted_cat_and_subcat_dict[cat][subcat_name] = int(to_be_characteristic[subcat_name]*correction)
         return adjusted_cat_and_subcat_dict
 
-    def _execute_pipeline(self, execution_groups) -> list:
+    def _execute_pipeline(self, input_data) -> list:
         start_time=time.time()
+        execution_groups, tmp_dir = input_data
         local_reductions = {}
+        local_reductions_file_mapping={}
         data_list = self.reader.read_data_chunks(execution_groups)
         assert len(self.tasks) > 0
         for t_iter, task in enumerate(self.tasks):
@@ -428,8 +432,7 @@ class DataPipeline:
                     elif task.type() == TaskType.FILTER and task.filter(data):
                         elements.append(data)
                     elif task.type() == TaskType.BALANCING:
-                        selected_categories = self._calculate_if_given_sample_should_be_selected(data, task,
-                                                                                                 balancing_probabilities)
+                        selected_categories = self._calculate_if_given_sample_should_be_selected(data, task, balancing_probabilities)
                         if selected_categories:
                             task.mark_sample_as_selected(data, selected_categories)
                             elements.append(data)
@@ -441,8 +444,13 @@ class DataPipeline:
             task.teardown()
         if len(data_list) > 0 and self.saver is not None:
             self.saver.save(data_list)
+        if len(local_reductions)>0:
+            for reduced_value_name,value in local_reductions.items():
+                fp = tempfile.NamedTemporaryFile(delete=False,dir=tmp_dir)
+                pickle.dump(value,fp, protocol=pickle.HIGHEST_PROTOCOL)
+                local_reductions_file_mapping[reduced_value_name]=fp.name
         self.logger.info("Finished execution group in {}s    {}".format(time.time()-start_time,execution_groups))
-        return local_reductions
+        return local_reductions_file_mapping
 
     def _clean_savings_statuses(self, output_data_dir) -> None:
         saving_status_generic_file_path = '{}/{}_{}'.format(output_data_dir, self.saver.saving_status_file_prefix, '*')
@@ -512,8 +520,12 @@ class DataPipeline:
         yield chunk
 
     def _reduce_globally(self, reduction_task) -> tuple:
-        task, local_reductions = reduction_task
-        result = task.reduce_globally(local_reductions)
+        task, local_reductions_file_names = reduction_task
+        def next_local_reduction_gen():
+            for file_name in local_reductions_file_names:
+                with open(file_name, 'rb') as fp:
+                    yield pickle.load(fp)
+        result = task.reduce_globally(next_local_reduction_gen)
         if type(result) not in (float, int, str, dict):
             raise TypeError("Reduced values can be only dict, str, float or int, not {}.".format(type(result)))
         return task.reduced_value_name, result
@@ -531,11 +543,7 @@ class DataPipeline:
             else:
                 raise Exception("File extension {} not supported".format(self.output_metadata_file_format))
 
-    def shift(self) -> None:
-        """
-        Performs processing of the dataset according to the created pipeline.
-        """
-        global_reductions = None
+    def _execute(self,tmp_dir):
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
         if len(self._get_reduce_tasks()) == 0 and self.output_metadata_file_path is not None:
             raise AssertionError("You have defined a file name for reduce output but there is no task to reduce.")
@@ -560,16 +568,14 @@ class DataPipeline:
             'Created {} execution chunks for multi-threaded execution. Each chunk contains {} elements/observations.'.format(
                 len(execution_groups), self.processing_chunk_size))
         self._print_logs('Processing has started...')
-        local_reductions = pool.map(self._execute_pipeline, execution_groups)
+        local_reductions_file_mappings = pool.map(self._execute_pipeline, [(eg,tmp_dir) for eg in execution_groups])
         if self.saver is not None:
             self._print_logs('Processing completed. {} output files saved to {}.'.format(len(execution_groups),
                                                                                          self.saver.output_data_dir_path))
-            self._clean_savings_statuses(self.saver.output_data_dir_path)
         if len(self._get_reduce_tasks()) > 0:
             self._print_logs('Metadata generation has started...')
-            local_reductions = [lr for lr in local_reductions if lr is not None and len(lr) > 0]
-            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions]) for task in
-                                      self._get_reduce_tasks()]
+            local_reductions_file_mappings = [lr for lr in local_reductions_file_mappings if lr is not None and len(lr) > 0]
+            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions_file_mappings]) for task in self._get_reduce_tasks()]
             global_reductions = pool.map(self._reduce_globally, global_reduction_tasks)
             self._save_reduced(global_reductions)
             self._print_logs(
@@ -578,7 +584,17 @@ class DataPipeline:
             self._print_logs('Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
                                                                                self.saver.output_data_dir_path))
         pool.close()
-        return global_reductions
+
+    def shift(self) -> None:
+        """
+        Performs processing of the dataset according to the created pipeline.
+        """
+        tmp_dir = tempfile.TemporaryDirectory()
+        try:
+            self._execute(tmp_dir.name)
+        finally:
+            tmp_dir.cleanup()
+            self._clean_savings_statuses(self.saver.output_data_dir_path)
 
     def inference(self, data):
         for inference_task in self.inference_tasks:
