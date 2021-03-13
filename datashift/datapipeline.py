@@ -594,7 +594,8 @@ class DataPipeline:
             self._execute(tmp_dir.name)
         finally:
             tmp_dir.cleanup()
-            self.saver.clean_savings_statuses()
+            if self.saver:
+                self.saver.clean_savings_statuses()
 
     def inference(self, data):
         for inference_task in self.inference_tasks:
