@@ -202,6 +202,11 @@ class AbstractFileSaver(AbstractSaver):
     def _chunk_by_n_rows(self, data_list, size) -> tuple:
         return (data_list[pos:pos + size] for pos in range(0, len(data_list), size))
 
+    def clean_savings_statuses(self) -> None:
+        saving_status_generic_file_path = '{}/{}_{}'.format(self.output_data_dir_path, self.saving_status_file_prefix, '*')
+        for file_path in glob.glob(saving_status_generic_file_path):
+            os.remove(file_path)
+
 
 class DefaultCSVSaver(AbstractFileSaver):
     def __init__(self, output_data_dir_path, output_file_name_prefix, output_file_size):
@@ -452,11 +457,6 @@ class DataPipeline:
         self.logger.info("Finished execution group in {}s    {}".format(time.time()-start_time,execution_groups))
         return local_reductions_file_mapping
 
-    def _clean_savings_statuses(self, output_data_dir) -> None:
-        saving_status_generic_file_path = '{}/{}_{}'.format(output_data_dir, self.saver.saving_status_file_prefix, '*')
-        for file_path in glob.glob(saving_status_generic_file_path):
-            os.remove(file_path)
-
     def _calculate_if_given_sample_should_be_selected(self, sample, task, balancing_probabilities) -> list:
         selected_categories = []
         for category in task.determine_categories(sample):
@@ -594,7 +594,7 @@ class DataPipeline:
             self._execute(tmp_dir.name)
         finally:
             tmp_dir.cleanup()
-            self._clean_savings_statuses(self.saver.output_data_dir_path)
+            self.saver.clean_savings_statuses()
 
     def inference(self, data):
         for inference_task in self.inference_tasks:
