@@ -30,9 +30,14 @@ class AbstractReader(ABC):
         raise NotImplementedError("Method not implemented!")
 
     @abstractmethod
-    def read_data_chunks(self, execution_groups):
+    def next_data_chunk_gen(self, execution_groups):
         raise NotImplementedError("Method not implemented!")
 
+    def setup(self):
+        pass
+
+    def teardown(self):
+        pass
 
 class DefaultListReader(AbstractReader):
     def __init__(self, data_list):
@@ -47,8 +52,8 @@ class DefaultListReader(AbstractReader):
             last_pos += chunksize
         return execution_groups
 
-    def read_data_chunks(self, execution_groups):
-        return self.data_list[execution_groups[0]:execution_groups[0] + execution_groups[1]]
+    def next_data_chunk_gen(self, execution_groups):
+        yield self.data_list[execution_groups[0]:execution_groups[0] + execution_groups[1]]
 
 
 class AbstractFileReader(AbstractReader):
@@ -92,14 +97,14 @@ class AbstractFileReader(AbstractReader):
                     buffer_level += (no_elements - buffer_level)
         return execution_groups
 
-    def read_data_chunks(self, execution_groups):
+    def next_data_chunk_gen(self, execution_groups):
         data_list = []
         for (filepath, from_item, chunk_size) in execution_groups:
             data_chunk = self._read_data_chunk(filepath, from_item, chunk_size)
             assert type(data_chunk) == list
             data_list.append(data_chunk)
         data_list = [item for sublist in data_list for item in sublist]
-        return data_list
+        yield data_list
 
 
 class DefaultCSVReader(AbstractFileReader):
@@ -417,43 +422,45 @@ class DataPipeline:
 
     def _execute_pipeline(self, input_data) -> list:
         start_time=time.time()
+        local_reductions_file_mapping = {}
+        self.reader.setup()
         execution_groups, tmp_dir = input_data
-        local_reductions = {}
-        local_reductions_file_mapping={}
-        data_list = self.reader.read_data_chunks(execution_groups)
-        assert len(self.tasks) > 0
-        for t_iter, task in enumerate(self.tasks):
-            task.setup()
-            if task.type() == TaskType.REDUCER and len(data_list) > 0:
-                self._validate_and_reduce_locally(task, data_list, local_reductions)
-            else:
-                if task.type() == TaskType.BALANCING:
-                    balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
-                elements = []
-                for data in self.gen_chunks(data_list,
-                                            task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
-                    if task.type() == TaskType.PROCESSOR:
-                        elements.append(task.process(data))
-                    elif task.type() == TaskType.FILTER and task.filter(data):
-                        elements.append(data)
-                    elif task.type() == TaskType.BALANCING:
-                        selected_categories = self._calculate_if_given_sample_should_be_selected(data, task, balancing_probabilities)
-                        if selected_categories:
-                            task.mark_sample_as_selected(data, selected_categories)
-                            elements.append(data)
-
-                if t_iter + 1 in self.flattened_steps:
-                    data_list = [item for sublist in elements for item in sublist]
+        for data_list in self.reader.next_data_chunk_gen(execution_groups):
+            local_reductions = {}
+            assert len(self.tasks) > 0
+            for t_iter, task in enumerate(self.tasks):
+                task.setup()
+                if task.type() == TaskType.REDUCER and len(data_list) > 0:
+                    self._validate_and_reduce_locally(task, data_list, local_reductions)
                 else:
-                    data_list = elements
-            task.teardown()
-        if len(data_list) > 0 and self.saver is not None:
-            self.saver.save(data_list)
-        if len(local_reductions)>0:
-            for reduced_value_name,value in local_reductions.items():
-                fp = tempfile.NamedTemporaryFile(delete=False,dir=tmp_dir)
-                pickle.dump(value,fp, protocol=pickle.HIGHEST_PROTOCOL)
-                local_reductions_file_mapping[reduced_value_name]=fp.name
+                    if task.type() == TaskType.BALANCING:
+                        balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
+                    elements = []
+                    for data in self.gen_chunks(data_list,
+                                                task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
+                        if task.type() == TaskType.PROCESSOR:
+                            elements.append(task.process(data))
+                        elif task.type() == TaskType.FILTER and task.filter(data):
+                            elements.append(data)
+                        elif task.type() == TaskType.BALANCING:
+                            selected_categories = self._calculate_if_given_sample_should_be_selected(data, task, balancing_probabilities)
+                            if selected_categories:
+                                task.mark_sample_as_selected(data, selected_categories)
+                                elements.append(data)
+
+                    if t_iter + 1 in self.flattened_steps:
+                        data_list = [item for sublist in elements for item in sublist]
+                    else:
+                        data_list = elements
+                task.teardown()
+            if len(data_list) > 0 and self.saver is not None:
+                self.saver.save(data_list)
+            if len(local_reductions)>0:
+                for reduced_value_name,value in local_reductions.items():
+                    fp = tempfile.NamedTemporaryFile(delete=False,dir=tmp_dir)
+                    pickle.dump(value,fp, protocol=pickle.HIGHEST_PROTOCOL)
+                    local_reductions_file_mapping[reduced_value_name]=fp.name
+        self.reader.teardown()
         self.logger.info("Finished execution group in {}s    {}".format(time.time()-start_time,execution_groups))
         return local_reductions_file_mapping
 
