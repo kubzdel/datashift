@@ -420,16 +420,20 @@ class DataPipeline:
                     adjusted_cat_and_subcat_dict[cat][subcat_name] = int(to_be_characteristic[subcat_name]*correction)
         return adjusted_cat_and_subcat_dict
 
+    def _setup_tasks(self):
+        for task in self.tasks:
+            task.setup()
+
     def _execute_pipeline(self, input_data) -> list:
         start_time=time.time()
         local_reductions_file_mapping = {}
         self.reader.setup()
+        self._setup_tasks()
         execution_groups, tmp_dir = input_data
         for data_list in self.reader.next_data_chunk_gen(execution_groups):
             local_reductions = {}
             assert len(self.tasks) > 0
             for t_iter, task in enumerate(self.tasks):
-                task.setup()
                 if task.type() == TaskType.REDUCER and len(data_list) > 0:
                     self._validate_and_reduce_locally(task, data_list, local_reductions)
                 else:
@@ -452,7 +456,6 @@ class DataPipeline:
                         data_list = [item for sublist in elements for item in sublist]
                     else:
                         data_list = elements
-                task.teardown()
             if len(data_list) > 0 and self.saver is not None:
                 self.saver.save(data_list)
             if len(local_reductions)>0:
@@ -461,8 +464,13 @@ class DataPipeline:
                     pickle.dump(value,fp, protocol=pickle.HIGHEST_PROTOCOL)
                     local_reductions_file_mapping[reduced_value_name]=fp.name
         self.reader.teardown()
+        self._teardown_tasks()
         self.logger.info("Finished execution group in {}s    {}".format(time.time()-start_time,execution_groups))
         return local_reductions_file_mapping
+
+    def _teardown_tasks(self):
+        for task in self.tasks:
+            task.teardown()
 
     def _calculate_if_given_sample_should_be_selected(self, sample, task, balancing_probabilities) -> list:
         selected_categories = []
