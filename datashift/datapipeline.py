@@ -192,7 +192,7 @@ class AbstractFileSaver(AbstractSaver):
                 remaining = self.output_file_size - last_file_items
         if last_file_path and remaining > 0:
             self._save_chunk(data[:remaining], last_file_path, False)
-            last_file_items += remaining
+            last_file_items += len(data[:remaining])
 
         if len(data) > remaining:
             for data_part in self._chunk_by_n_rows(data[remaining:], self.output_file_size):
