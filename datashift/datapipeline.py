@@ -575,7 +575,12 @@ class DataPipeline:
             'Created {} execution chunks for multi-threaded execution. Each chunk contains {} elements/observations.'.format(
                 len(execution_groups), self.processing_chunk_size))
         self._print_logs('Processing has started...')
-        local_reductions_file_mappings = pool.map(self._execute_pipeline, [(eg,tmp_dir) for eg in execution_groups])
+        try:
+            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(eg,tmp_dir) for eg in execution_groups])
+        except Exception as e:
+            pool.terminate()
+            self.logger.error('Ann error during processing occured: {}'.format(str(e)))
+            raise e
         if self.saver is not None:
             self._print_logs('Processing completed. {} output files saved to {}.'.format(len(execution_groups),
                                                                                          self.saver.output_data_dir_path))
