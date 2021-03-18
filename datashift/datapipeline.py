@@ -613,9 +613,7 @@ class DataPipeline:
             self._save_reduced(global_reductions)
             self._print_logs(
                 'Metadata generation completed. Statistics saved to {}.'.format(self.output_metadata_file_path))
-        if self.saver is not None:
-            self._print_logs('Data from {} SUCCESSFULLY shifted to {}!'.format(self.reader.input_data_path_pattern,
-                                                                               self.saver.output_data_dir_path))
+        self._print_logs('Data from SUCCESSFULLY shifted!')
         pool.close()
 
     def shift(self) -> None:
