@@ -74,7 +74,7 @@ class DatasetIntegrationTestCase(unittest.TestCase):
             .process_task(CleanTextTask()) \
             .shift()
 
-        self.assertEqual(len(glob.glob('{}/*.csv'.format(self.OUTPUT_DIR))), 29)
+        self.assertEqual(len(glob.glob('{}/*.csv'.format(self.OUTPUT_DIR))), 15)
 
     def test_inference(self):
         data = DataPipeline(reader=DefaultCSVReader(input_data_path_pattern=self.INPUT_DATA_CSV,

@@ -30,11 +30,11 @@ class AbstractReader(ABC):
         raise NotImplementedError("Method not implemented!")
 
     @abstractmethod
-    def next_data_chunk_gen(self, execution_groups):
+    def next_data_chunk(self, execution_groups):
         raise NotImplementedError("Method not implemented!")
 
-    def setup(self):
-        pass
+    def setup(self,execution_groups):
+        self.execution_groups=execution_groups
 
     def teardown(self):
         pass
@@ -52,8 +52,13 @@ class DefaultListReader(AbstractReader):
             last_pos += chunksize
         return execution_groups
 
-    def next_data_chunk_gen(self, execution_groups):
-        yield self.data_list[execution_groups[0]:execution_groups[0] + execution_groups[1]]
+    def next_data_chunk(self):
+        if self.execution_groups is None:
+            return None
+        else:
+            result = self.data_list[self.execution_groups[0]:self.execution_groups[0] + self.execution_groups[1]]
+            self.execution_groups=None
+            return result
 
 
 class AbstractFileReader(AbstractReader):
@@ -97,14 +102,18 @@ class AbstractFileReader(AbstractReader):
                     buffer_level += (no_elements - buffer_level)
         return execution_groups
 
-    def next_data_chunk_gen(self, execution_groups):
-        data_list = []
-        for (filepath, from_item, chunk_size) in execution_groups:
-            data_chunk = self._read_data_chunk(filepath, from_item, chunk_size)
-            assert type(data_chunk) == list
-            data_list.append(data_chunk)
-        data_list = [item for sublist in data_list for item in sublist]
-        yield data_list
+    def next_data_chunk(self):
+        if self.execution_groups is None:
+            return None
+        else:
+            data_list = []
+            for (filepath, from_item, chunk_size) in self.execution_groups:
+                data_chunk = self._read_data_chunk(filepath, from_item, chunk_size)
+                assert type(data_chunk) == list
+                data_list.append(data_chunk)
+            data_list = [item for sublist in data_list for item in sublist]
+            self.execution_groups=None
+            return data_list
 
 
 class DefaultCSVReader(AbstractFileReader):
@@ -429,10 +438,12 @@ class DataPipeline:
     def _execute_pipeline(self, input_data) -> list:
         start_time=time.time()
         local_reductions_file_mapping = {}
-        self.reader.setup()
-        self._setup_tasks()
         execution_groups, tmp_dir = input_data
-        for data_list in self.reader.next_data_chunk_gen(execution_groups):
+        self.reader.setup(execution_groups)
+        self._setup_tasks()
+
+        data_list=self.reader.next_data_chunk()
+        while data_list is not None and len(data_list)>0:
             local_reductions = {}
             assert len(self.tasks) > 0
             for t_iter, task in enumerate(self.tasks):
@@ -465,6 +476,7 @@ class DataPipeline:
                     fp = tempfile.NamedTemporaryFile(delete=False,dir=tmp_dir)
                     pickle.dump(value,fp, protocol=pickle.HIGHEST_PROTOCOL)
                     local_reductions_file_mapping[reduced_value_name]=fp.name
+            data_list = self.reader.next_data_chunk()
         self.reader.teardown()
         self._teardown_tasks()
         self.logger.info("Process {} - Finished execution group in {}s    {}".format(os.getpid(),time.time()-start_time,execution_groups))
