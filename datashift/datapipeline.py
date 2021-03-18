@@ -30,11 +30,11 @@ class AbstractReader(ABC):
         raise NotImplementedError("Method not implemented!")
 
     @abstractmethod
-    def next_data_chunk(self, execution_groups):
+    def next_data_chunk(self, execution_groups,metadata):
         raise NotImplementedError("Method not implemented!")
 
-    def setup(self,execution_groups):
-        self.execution_groups=execution_groups
+    def setup(self):
+        pass
 
     def teardown(self):
         pass
@@ -52,13 +52,12 @@ class DefaultListReader(AbstractReader):
             last_pos += chunksize
         return execution_groups
 
-    def next_data_chunk(self):
-        if self.execution_groups is None:
+    def next_data_chunk(self,execution_groups,metadata):
+        if metadata is not None and metadata is False:
             return None
         else:
             result = self.data_list[self.execution_groups[0]:self.execution_groups[0] + self.execution_groups[1]]
-            self.execution_groups=None
-            return result
+            return result, False
 
 
 class AbstractFileReader(AbstractReader):
