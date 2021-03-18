@@ -165,6 +165,7 @@ class AbstractFileSaver(AbstractSaver):
         if self.saving_status_file_prefix in self.output_file_name_prefix:
             raise Exception('The saving status file prefix ({}) can be a sub-name of output file name ({})',
                             self.saving_status_file_prefix, self.output_file_name_prefix)
+        self.logger = logging.getLogger('datashift')
 
     @abstractmethod
     def _save_chunk(self, data, filename, new_file):
@@ -203,6 +204,7 @@ class AbstractFileSaver(AbstractSaver):
                 last_file_items = len(data_part)
         with open(saving_status_file_path, 'w') as f:
             f.writelines(['{};{}'.format(last_file_path, last_file_items)])
+            self.logger.info('Process {} - Saved items {} - {}/{}.'.format(os.getpid(),last_file_path,last_file_items,self.output_file_size))
 
     def _chunk_by_n_rows(self, data_list, size) -> tuple:
         return (data_list[pos:pos + size] for pos in range(0, len(data_list), size))
@@ -465,7 +467,7 @@ class DataPipeline:
                     local_reductions_file_mapping[reduced_value_name]=fp.name
         self.reader.teardown()
         self._teardown_tasks()
-        self.logger.info("Finished execution group in {}s    {}".format(time.time()-start_time,execution_groups))
+        self.logger.info("Process {} - Finished execution group in {}s    {}".format(os.getpid(),time.time()-start_time,execution_groups))
         return local_reductions_file_mapping
 
     def _teardown_tasks(self):
