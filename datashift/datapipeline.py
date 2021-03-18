@@ -212,7 +212,7 @@ class AbstractFileSaver(AbstractSaver):
                 last_file_items = len(data_part)
         with open(saving_status_file_path, 'w') as f:
             f.writelines(['{};{}'.format(last_file_path, last_file_items)])
-            self.logger.info('Process {} - Saved items {} - {}/{}.'.format(os.getpid(),last_file_path,last_file_items,self.output_file_size))
+           # self.logger.info('Process {} - Saved items {} - {}/{}.'.format(os.getpid(),last_file_path,last_file_items,self.output_file_size))
 
     def _chunk_by_n_rows(self, data_list, size) -> tuple:
         return (data_list[pos:pos + size] for pos in range(0, len(data_list), size))
