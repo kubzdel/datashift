@@ -31,6 +31,9 @@ class AbstractDataBucket(ABC):
     def next_data_chunk(self):
         raise NotImplementedError("Method not implemented!")
 
+    def setup(self):
+        pass
+
     def teardown(self):
         pass
 
@@ -442,6 +445,7 @@ class DataPipeline:
         start_time = time.time()
         local_reductions_file_mapping = {}
         data_bucket, tmp_dir = input_data
+        data_bucket.setup()
         self._setup_tasks()
         self._print_logs('Starting processing of {}'.format(data_bucket))
         data_list = data_bucket.next_data_chunk()
