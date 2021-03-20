@@ -92,15 +92,6 @@ class DatasetIntegrationTestCase(unittest.TestCase):
 
         self.assertEqual(result['comment_text'], 'this is... a text.')
 
-    def test_textlines_processing(self):
-        DataPipeline(reader=DefaultTextLineReader(input_data_path_pattern=self.INPUT_DATA_TXT),
-                     saver=DefaultTextLineSaver(output_data_dir_path=self.OUTPUT_DIR, output_file_size=20,
-                                                output_file_name_prefix='processed'),
-                     processing_chunk_size=5, \
-                     num_workers=1) \
-            .process_task(CleanTextLineTask()) \
-            .shift()
-
     def _load_reduced_file(self):
         results_file = open(self.OUTPUT_METADATA)
         return yaml.load(results_file, Loader=yaml.FullLoader)

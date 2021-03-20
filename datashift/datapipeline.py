@@ -3,18 +3,18 @@ from __future__ import annotations
 import csv
 import glob
 import json
-import time
 import logging
 import math
 import multiprocessing
 import os
+import pickle
 import sys
+import tempfile
+import time
 from abc import abstractmethod, ABC
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Iterator
-import tempfile
-import pickle
 
 import numpy as np
 import pandas as pd
@@ -23,41 +23,43 @@ import yaml
 from datashift.task import AbstractBalancingTask, TaskType, AbstractProcessingTask, AbstractFilterTask
 
 
-class AbstractReader(ABC):
+class AbstractDataBucket(ABC):
+    def __init__(self, data_buckets):
+        self.data_buckets = data_buckets
 
     @abstractmethod
-    def determine_chunked_execution_groups(self, pool, chunksize):
+    def next_data_chunk(self):
         raise NotImplementedError("Method not implemented!")
-
-    @abstractmethod
-    def next_data_chunk(self, execution_groups,metadata):
-        raise NotImplementedError("Method not implemented!")
-
-    def setup(self):
-        pass
 
     def teardown(self):
         pass
 
-class DefaultListReader(AbstractReader):
-    def __init__(self, data_list):
-        self.data_list = data_list
+    def __str__(self):
+        return str(self.data_buckets)
 
-    def determine_chunked_execution_groups(self, pool, chunksize):
-        execution_groups = []
-        last_pos = 0
-        data_list_len = len(self.data_list)
-        while last_pos <= data_list_len:
-            execution_groups.append((last_pos, min(chunksize, data_list_len - last_pos)))
-            last_pos += chunksize
-        return execution_groups
 
-    def next_data_chunk(self,execution_groups,metadata):
-        if metadata is not None and metadata is False:
-            return None
-        else:
-            result = self.data_list[self.execution_groups[0]:self.execution_groups[0] + self.execution_groups[1]]
-            return result, False
+class AbstractReader(ABC):
+    @abstractmethod
+    def build_data_buckets(self, pool, chunksize):
+        raise NotImplementedError("Method not implemented!")
+
+
+class AbstractFileDataBucketLoader(AbstractDataBucket):
+    @abstractmethod
+    def _read_data_bucket(self, filepath, from_item, chunk_size):
+        raise NotImplementedError("Method not implemented!")
+
+    def next_data_chunk(self):
+        data_list = []
+        if len(self.data_buckets) > 0:
+            assert type(self.data_buckets) == list
+            for data_bucket in self.data_buckets:
+                (filepath, from_item, chunk_size) = data_bucket
+                data_chunk = self._read_data_bucket(filepath, from_item, chunk_size)
+                assert type(data_chunk) == list
+                data_list.append(data_chunk)
+                self.data_buckets.remove(data_bucket)
+        return [item for sublist in data_list for item in sublist]
 
 
 class AbstractFileReader(AbstractReader):
@@ -65,54 +67,52 @@ class AbstractFileReader(AbstractReader):
         self.input_data_path_pattern = input_data_path_pattern
 
     @abstractmethod
-    def _determine_number_of_items_in_one_file(self, path) -> int:
+    def _determine_number_of_items_in_file(self, path, chunk_size) -> int:
         raise NotImplementedError("Method not implemented!")
 
     @abstractmethod
-    def _read_data_chunk(self, filepath, from_item, chunk_size):
+    def _create_data_bucket_object(self, data_buckets):
         raise NotImplementedError("Method not implemented!")
 
-    def _no_items_in_one_file(self, path_and_chunksize):
-        path, chunk_size = path_and_chunksize
-        return self._determine_number_of_items_in_one_file(path, chunk_size)
+    def _no_items_in_one_file(self, path_and_chunk_size):
+        path, chunk_size = path_and_chunk_size
+        return self._determine_number_of_items_in_file(path, chunk_size)
 
-    def determine_chunked_execution_groups(self, pool, chunk_size) -> list:
+    def build_data_buckets(self, pool, chunk_size) -> list:
         all_file_paths = glob.glob(self.input_data_path_pattern)
         number_of_items_per_file = pool.map(self._no_items_in_one_file, [(path, chunk_size) for path in all_file_paths])
-        execution_groups = []
+        data_buckets = []
         remaining_to_full_chunk = chunk_size
         for file, no_elements in zip(all_file_paths, number_of_items_per_file):
             buffer_level = 0
             if remaining_to_full_chunk < chunk_size:
-                current_chunk_size=min(remaining_to_full_chunk, no_elements)
-                execution_groups[-1].append((file, buffer_level, current_chunk_size))
-                buffer_level+=current_chunk_size
+                current_chunk_size = min(remaining_to_full_chunk, no_elements)
+                data_buckets[-1].append((file, buffer_level, current_chunk_size))
+                buffer_level += current_chunk_size
                 remaining_to_full_chunk -= current_chunk_size
 
             while buffer_level != no_elements:
                 remaining_to_full_chunk = chunk_size
                 if buffer_level + chunk_size <= no_elements:
-                    execution_groups.append([(file, buffer_level, chunk_size)])
+                    data_buckets.append([(file, buffer_level, chunk_size)])
                     buffer_level += chunk_size
-                    remaining_to_full_chunk-=chunk_size
+                    remaining_to_full_chunk -= chunk_size
                 else:
-                    execution_groups.append([(file, buffer_level, no_elements - buffer_level)])
+                    data_buckets.append([(file, buffer_level, no_elements - buffer_level)])
                     remaining_to_full_chunk -= (no_elements - buffer_level)
                     buffer_level += (no_elements - buffer_level)
-        return execution_groups
+        return [self._create_data_bucket_object(db) for db in data_buckets]
 
-    def next_data_chunk(self):
-        if self.execution_groups is None:
-            return None
-        else:
-            data_list = []
-            for (filepath, from_item, chunk_size) in self.execution_groups:
-                data_chunk = self._read_data_chunk(filepath, from_item, chunk_size)
-                assert type(data_chunk) == list
-                data_list.append(data_chunk)
-            data_list = [item for sublist in data_list for item in sublist]
-            self.execution_groups=None
-            return data_list
+
+class DefaultCSVDataBucketLoader(AbstractFileDataBucketLoader):
+    def __init__(self, data_buckets, input_columns):
+        self.input_columns = input_columns
+        super().__init__(data_buckets=data_buckets)
+
+    def _read_data_bucket(self, filepath, from_item, chunk_size):
+        df = pd.read_csv(filepath, skiprows=range(1, max(from_item, 1)), nrows=chunk_size,
+                         usecols=self.input_columns).fillna('')
+        return df.to_dict('records')
 
 
 class DefaultCSVReader(AbstractFileReader):
@@ -120,7 +120,7 @@ class DefaultCSVReader(AbstractFileReader):
         self.input_columns = input_columns
         super().__init__(input_data_path_pattern)
 
-    def _determine_number_of_items_in_one_file(self, path, chunk_size) -> int:
+    def _determine_number_of_items_in_file(self, path, chunk_size) -> int:
         with open(path, 'r', encoding='utf-8') as f:
             first_key = next(csv.reader(f))[0]
         df_iter = pd.read_csv(path, usecols=[first_key], chunksize=chunk_size)
@@ -128,23 +128,12 @@ class DefaultCSVReader(AbstractFileReader):
             continue
         return chunk_size * i + df.shape[0]
 
-    def _read_data_chunk(self, filepath, from_item, chunk_size):
-        df = pd.read_csv(filepath, skiprows=range(1, max(from_item, 1)), nrows=chunk_size,
-                         usecols=self.input_columns).fillna('')
-        return df.to_dict('records')
+    def _create_data_bucket_object(self, data_buckets):
+        return DefaultCSVDataBucketLoader(data_buckets=data_buckets, input_columns=self.input_columns)
 
 
-class DefaultTextLineReader(AbstractFileReader):
-    def __init__(self, input_data_path_pattern):
-        super().__init__(input_data_path_pattern)
-
-    def _determine_number_of_items_in_one_file(self, path, chunk_size) -> int:
-        counter = 0
-        for line in open(path):
-            counter += 1
-        return counter
-
-    def _read_data_chunk(self, filepath, from_item, chunk_size):
+class DefaultTextLineBucketLoader(AbstractFileDataBucketLoader):
+    def _read_data_bucket(self, filepath, from_item, chunk_size):
         data_chunk = []
         to_item = from_item + chunk_size
         fp = open(filepath)
@@ -155,6 +144,20 @@ class DefaultTextLineReader(AbstractFileReader):
                 break
         fp.close()
         return data_chunk
+
+
+class DefaultTextLineReader(AbstractFileReader):
+    def __init__(self, input_data_path_pattern):
+        super().__init__(input_data_path_pattern)
+
+    def _determine_number_of_items_in_file(self, path, chunk_size) -> int:
+        counter = 0
+        for _ in open(path):
+            counter += 1
+        return counter
+
+    def _create_data_bucket_object(self, data_buckets):
+        return DefaultTextLineBucketLoader(data_buckets)
 
 
 class AbstractSaver(ABC):
@@ -212,13 +215,13 @@ class AbstractFileSaver(AbstractSaver):
                 last_file_items = len(data_part)
         with open(saving_status_file_path, 'w') as f:
             f.writelines(['{};{}'.format(last_file_path, last_file_items)])
-           # self.logger.info('Process {} - Saved items {} - {}/{}.'.format(os.getpid(),last_file_path,last_file_items,self.output_file_size))
 
     def _chunk_by_n_rows(self, data_list, size) -> tuple:
         return (data_list[pos:pos + size] for pos in range(0, len(data_list), size))
 
     def clean_savings_statuses(self) -> None:
-        saving_status_generic_file_path = '{}/{}_{}'.format(self.output_data_dir_path, self.saving_status_file_prefix, '*')
+        saving_status_generic_file_path = '{}/{}_{}'.format(self.output_data_dir_path, self.saving_status_file_prefix,
+                                                            '*')
         for file_path in glob.glob(saving_status_generic_file_path):
             os.remove(file_path)
 
@@ -412,7 +415,8 @@ class DataPipeline:
         return values
 
     def _adjust_number_of_samples_per_subcategory(self, cat_and_subcat_dict,
-                                                  max_proportion_difference_subcategory=None, characteristic_distribution=None) -> dict:
+                                                  max_proportion_difference_subcategory=None,
+                                                  characteristic_distribution=None) -> dict:
         adjusted_cat_and_subcat_dict = {}
         for cat, subcat in cat_and_subcat_dict.items():
             adjusted_cat_and_subcat_dict[cat] = {}
@@ -424,10 +428,10 @@ class DataPipeline:
                     else:
                         adjusted_cat_and_subcat_dict[cat][subcat_name] = subcat[subcat_name]
             else:
-                to_be_characteristic={k:v*sum(subcat.values()) for k,v in characteristic_distribution.items()}
-                correction=min([subcat[k]/to_be_characteristic[k] for k in subcat.keys()])
+                to_be_characteristic = {k: v * sum(subcat.values()) for k, v in characteristic_distribution.items()}
+                correction = min([subcat[k] / to_be_characteristic[k] for k in subcat.keys()])
                 for subcat_name in subcat.keys():
-                    adjusted_cat_and_subcat_dict[cat][subcat_name] = int(to_be_characteristic[subcat_name]*correction)
+                    adjusted_cat_and_subcat_dict[cat][subcat_name] = int(to_be_characteristic[subcat_name] * correction)
         return adjusted_cat_and_subcat_dict
 
     def _setup_tasks(self):
@@ -435,14 +439,13 @@ class DataPipeline:
             task.setup()
 
     def _execute_pipeline(self, input_data) -> list:
-        start_time=time.time()
+        start_time = time.time()
         local_reductions_file_mapping = {}
-        execution_groups, tmp_dir = input_data
-        self.reader.setup(execution_groups)
+        data_bucket, tmp_dir = input_data
         self._setup_tasks()
-
-        data_list=self.reader.next_data_chunk()
-        while data_list is not None and len(data_list)>0:
+        self._print_logs('Starting processing of {}'.format(data_bucket))
+        data_list = data_bucket.next_data_chunk()
+        while data_list is not None and len(data_list) > 0:
             local_reductions = {}
             assert len(self.tasks) > 0
             for t_iter, task in enumerate(self.tasks):
@@ -452,14 +455,14 @@ class DataPipeline:
                     if task.type() == TaskType.BALANCING:
                         balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
                     elements = []
-                    for data in self.gen_chunks(data_list,
-                                                task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
+                    for data in self.gen_chunks(data_list, task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
                         if task.type() == TaskType.PROCESSOR:
                             elements.append(task.process(data))
                         elif task.type() == TaskType.FILTER and task.filter(data):
                             elements.append(data)
                         elif task.type() == TaskType.BALANCING:
-                            selected_categories = self._calculate_if_given_sample_should_be_selected(data, task, balancing_probabilities)
+                            selected_categories = self._calculate_if_given_sample_should_be_selected(data, task,
+                                                                                                     balancing_probabilities)
                             if selected_categories:
                                 task.mark_sample_as_selected(data, selected_categories)
                                 elements.append(data)
@@ -470,15 +473,15 @@ class DataPipeline:
                         data_list = elements
             if len(data_list) > 0 and self.saver is not None:
                 self.saver.save(data_list)
-            if len(local_reductions)>0:
-                for reduced_value_name,value in local_reductions.items():
-                    fp = tempfile.NamedTemporaryFile(delete=False,dir=tmp_dir)
-                    pickle.dump(value,fp, protocol=pickle.HIGHEST_PROTOCOL)
-                    local_reductions_file_mapping[reduced_value_name]=fp.name
-            data_list = self.reader.next_data_chunk()
-        self.reader.teardown()
+            if len(local_reductions) > 0:
+                for reduced_value_name, value in local_reductions.items():
+                    fp = tempfile.NamedTemporaryFile(delete=False, dir=tmp_dir)
+                    pickle.dump(value, fp, protocol=pickle.HIGHEST_PROTOCOL)
+                    local_reductions_file_mapping[reduced_value_name] = fp.name
+            data_list = data_bucket.next_data_chunk()
+        data_bucket.teardown()
         self._teardown_tasks()
-        self.logger.info("Process {} - Finished execution group in {}s    {}".format(os.getpid(),time.time()-start_time,execution_groups))
+        self._print_logs("Process {} - Finished data bucket in {}s".format(os.getpid(), time.time() - start_time))
         return local_reductions_file_mapping
 
     def _teardown_tasks(self):
@@ -549,10 +552,12 @@ class DataPipeline:
 
     def _reduce_globally(self, reduction_task) -> tuple:
         task, local_reductions_file_names = reduction_task
+
         def next_local_reduction_gen():
             for file_name in local_reductions_file_names:
                 with open(file_name, 'rb') as fp:
                     yield pickle.load(fp)
+
         result = task.reduce_globally(next_local_reduction_gen)
         if type(result) not in (float, int, str, dict):
             raise TypeError("Reduced values can be only dict, str, float or int, not {}.".format(type(result)))
@@ -571,7 +576,7 @@ class DataPipeline:
             else:
                 raise Exception("File extension {} not supported".format(self.output_metadata_file_format))
 
-    def _execute(self,tmp_dir):
+    def _execute(self, tmp_dir):
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
         if len(self._get_reduce_tasks()) == 0 and self.output_metadata_file_path is not None:
             raise AssertionError("You have defined a file name for reduce output but there is no task to reduce.")
@@ -583,32 +588,25 @@ class DataPipeline:
             raise AssertionError(
                 "Please add a saver to save data or/and reduction tasks and reduction output file to reduce data.")
         pool = Pool(self.num_workers)
-        # all_file_paths = glob.glob(self.input_data_path_pattern)
-        # if not all_file_paths:
-        #     raise FileNotFoundError('Files were not found in the location : {}'.format(self.input_data_path_pattern))
-        # self._print_logs(
-        #    'Localized {} files to be shifted from {} to {}.'.format(len(all_file_paths), self.input_data_path_pattern,
-        #                                                             self.output_data_dir_path))
         self._print_logs(
             'Data scanning and generation of data chunks for multi-threaded execution. This may take a while...')
-        execution_groups = self.reader.determine_chunked_execution_groups(pool, self.processing_chunk_size)
-        self._print_logs(
-            'Created {} execution chunks for multi-threaded execution. Each chunk contains {} elements/observations.'.format(
-                len(execution_groups), self.processing_chunk_size))
+        data_buckets = self.reader.build_data_buckets(pool, self.processing_chunk_size)
+        self._print_logs('Created {} dedicated data buckets for multi-threaded execution.'.format(len(data_buckets)))
         self._print_logs('Processing has started...')
         try:
-            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(eg,tmp_dir) for eg in execution_groups])
+            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(db, tmp_dir) for db in data_buckets])
         except Exception as e:
             pool.terminate()
             self.logger.error('Ann error during processing occured: {}'.format(str(e)))
             raise e
         if self.saver is not None:
-            self._print_logs('Processing completed. {} output files saved to {}.'.format(len(execution_groups),
-                                                                                         self.saver.output_data_dir_path))
+            self._print_logs('Processing completed.')
         if len(self._get_reduce_tasks()) > 0:
             self._print_logs('Metadata generation has started...')
-            local_reductions_file_mappings = [lr for lr in local_reductions_file_mappings if lr is not None and len(lr) > 0]
-            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions_file_mappings]) for task in self._get_reduce_tasks()]
+            local_reductions_file_mappings = [lr for lr in local_reductions_file_mappings if
+                                              lr is not None and len(lr) > 0]
+            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions_file_mappings]) for
+                                      task in self._get_reduce_tasks()]
             global_reductions = pool.map(self._reduce_globally, global_reduction_tasks)
             self._save_reduced(global_reductions)
             self._print_logs(
