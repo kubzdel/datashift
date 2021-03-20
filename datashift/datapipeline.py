@@ -310,7 +310,7 @@ class DataPipeline:
         self.output_metadata_file_path = output_metadata_file_path
         self.output_metadata_file_format = output_metadata_file_format
         self.verbose = verbose
-        self.proxy_object=None
+        self._proxy_object=None
 
         if verbose and logger is None:
             self.logger = self._create_and_configure_logger()
@@ -363,7 +363,7 @@ class DataPipeline:
         return self
 
     def proxy_object(self,proxy_object):
-        self.proxy_object=proxy_object
+        self._proxy_object=proxy_object
         return self
 
     def _get_reduce_tasks(self):
@@ -608,7 +608,7 @@ class DataPipeline:
         self._print_logs('Created {} dedicated data buckets for multi-threaded execution.'.format(len(data_buckets)))
         self._print_logs('Processing has started...')
         try:
-            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(db, tmp_dir,self.proxy_object()) for db in data_buckets])
+            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(db, tmp_dir,self._proxy_object) for db in data_buckets])
         except Exception as e:
             pool.terminate()
             self.logger.error('Ann error during processing occured: {}'.format(str(e)))
