@@ -446,7 +446,6 @@ class DataPipeline:
         local_reductions_file_mapping = {}
         data_bucket, tmp_dir = input_data
         data_bucket.setup()
-        self._setup_tasks()
         self._print_logs('Starting processing of {}'.format(data_bucket))
         data_list = data_bucket.next_data_chunk()
         while data_list is not None and len(data_list) > 0:
@@ -484,7 +483,6 @@ class DataPipeline:
                     local_reductions_file_mapping[reduced_value_name] = fp.name
             data_list = data_bucket.next_data_chunk()
         data_bucket.teardown()
-        self._teardown_tasks()
         self._print_logs("Process {} - Finished data bucket in {}s".format(os.getpid(), time.time() - start_time))
         return local_reductions_file_mapping
 
@@ -598,7 +596,9 @@ class DataPipeline:
         self._print_logs('Created {} dedicated data buckets for multi-threaded execution.'.format(len(data_buckets)))
         self._print_logs('Processing has started...')
         try:
+            self._setup_tasks()
             local_reductions_file_mappings = pool.map(self._execute_pipeline, [(db, tmp_dir) for db in data_buckets])
+            self._teardown_tasks()
         except Exception as e:
             pool.terminate()
             self.logger.error('Ann error during processing occured: {}'.format(str(e)))
