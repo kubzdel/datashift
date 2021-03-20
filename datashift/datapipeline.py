@@ -453,7 +453,7 @@ class DataPipeline:
         data_bucket.setup()
         self._setup_tasks()
         for task in self.tasks:
-            task.assign_proxy_object(self.proxy_object)
+            task.assign_proxy_object(proxy_object)
         self._print_logs('Starting processing of {}'.format(data_bucket))
         data_list = data_bucket.next_data_chunk()
         while data_list is not None and len(data_list) > 0:
