@@ -37,6 +37,9 @@ class AbstractDataBucket(ABC):
     def teardown(self):
         pass
 
+    def assign_proxy_object(self,proxy_object):
+        pass
+
     def __str__(self):
         return str(self.data_buckets)
 
@@ -307,6 +310,7 @@ class DataPipeline:
         self.output_metadata_file_path = output_metadata_file_path
         self.output_metadata_file_format = output_metadata_file_format
         self.verbose = verbose
+        self.proxy_object=None
 
         if verbose and logger is None:
             self.logger = self._create_and_configure_logger()
@@ -357,6 +361,9 @@ class DataPipeline:
             raise Exception(self._FLATTEN_ORDER_EXCEPTION)
         self.flattened_steps.append(len(self.tasks))
         return self
+
+    def proxy_object(self,proxy_object):
+        self.proxy_object=proxy_object
 
     def _get_reduce_tasks(self):
         return [task for task in self.tasks if task.type() == TaskType.REDUCER]
@@ -444,9 +451,11 @@ class DataPipeline:
     def _execute_pipeline(self, input_data) -> list:
         start_time = time.time()
         local_reductions_file_mapping = {}
-        data_bucket, tmp_dir = input_data
+        data_bucket, tmp_dir,proxy_object = input_data
         data_bucket.setup()
         self._setup_tasks()
+        for task in self.tasks:
+            task.assign_proxy_object(self.proxy_object)
         self._print_logs('Starting processing of {}'.format(data_bucket))
         data_list = data_bucket.next_data_chunk()
         while data_list is not None and len(data_list) > 0:
@@ -598,7 +607,7 @@ class DataPipeline:
         self._print_logs('Created {} dedicated data buckets for multi-threaded execution.'.format(len(data_buckets)))
         self._print_logs('Processing has started...')
         try:
-            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(db, tmp_dir) for db in data_buckets])
+            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(db, tmp_dir,self.proxy_object()) for db in data_buckets])
         except Exception as e:
             pool.terminate()
             self.logger.error('Ann error during processing occured: {}'.format(str(e)))
