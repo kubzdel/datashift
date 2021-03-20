@@ -364,6 +364,7 @@ class DataPipeline:
 
     def proxy_object(self,proxy_object):
         self.proxy_object=proxy_object
+        return self
 
     def _get_reduce_tasks(self):
         return [task for task in self.tasks if task.type() == TaskType.REDUCER]
