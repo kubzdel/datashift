@@ -33,6 +33,8 @@ class _AbstractTask(ABC):
     def teardown(self):
         pass
 
+    def assign_proxy_object(self,proxy_object):
+        pass
 
 class AbstractFilterTask(_AbstractTask):
     """

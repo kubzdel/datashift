@@ -37,9 +37,6 @@ class AbstractDataBucket(ABC):
     def teardown(self):
         pass
 
-    def assign_proxy_object(self,proxy_object):
-        pass
-
     def __str__(self):
         return str(self.data_buckets)
 
