@@ -296,7 +296,8 @@ class DataPipeline:
         self.flattened_steps = []
         assert output_reduce_file_format == 'yaml' or output_reduce_file_format == 'json' 'Only yaml and json files are supported to save reduced values.'
         assert (output_reduce_file_path is not None and custom_reduce_save_callback is None) or \
-               (output_reduce_file_path is None and custom_reduce_save_callback is not None)
+               (output_reduce_file_path is None and custom_reduce_save_callback is not None) or \
+               (output_reduce_file_path is None and custom_reduce_save_callback is None)
         'If the custom reduce callback has been specified the output_reduce_file_path should be None'
         self.num_workers = num_workers if num_workers is not None else multiprocessing.cpu_count() - 1
         self.reader = reader
