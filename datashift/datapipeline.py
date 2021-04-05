@@ -598,11 +598,11 @@ class DataPipeline:
 
     def _execute(self, tmp_dir):
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
-        if len(self._get_reduce_tasks()) == 0 and self.output_reduce_file_path is not None:
-            raise AssertionError("You have defined a file name for reduce output but there is no task to reduce.")
-        if len(self._get_reduce_tasks()) > 0 and self.output_reduce_file_path is None:
+        if len(self._get_reduce_tasks()) == 0 and (self.output_reduce_file_path is not None or self.custom_reduce_save_callback is not None):
+            raise AssertionError("You have defined a file name or callback for reduce output but there is no task to reduce.")
+        if len(self._get_reduce_tasks()) > 0 and self.output_reduce_file_path is None and self.custom_reduce_save_callback is None:
             raise AssertionError(
-                "You have defined {} tasks to reduce but a file name for reduce output is still not defined.".format(
+                "You have defined {} tasks to reduce but a file name and callback for reduce output is still not defined.".format(
                     len(self._get_reduce_tasks())))
         if self.saver is None and len(self._get_reduce_tasks()) == 0:
             raise AssertionError(
