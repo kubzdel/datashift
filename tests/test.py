@@ -37,7 +37,7 @@ class DatasetIntegrationTestCase(unittest.TestCase):
                      saver=DefaultCSVSaver(output_data_dir_path=self.OUTPUT_DIR, output_file_size=10,
                                            output_file_name_prefix='processed'),
                      processing_chunk_size=100,
-                     output_metadata_file_path=self.OUTPUT_METADATA,
+                     output_reduce_file_path=self.OUTPUT_METADATA,
                      num_workers=1) \
             .process_task(CleanTextTask()) \
             .filter_task(MinTextLengthFilterStrategy(column_name='comment_text', min_characters=10)) \

@@ -281,8 +281,8 @@ class DataPipeline:
             input_columns (lint[str]): List of column names to be read from the raw input files. To minimize memory consumption in need to load only required columns.
             output_file_size (int): Total number of records / observations written to a single output file. If the number of processed samples exceeds this value, a next new data file is created. (Default: 50000).
             num_workers (int): Number of processing threads. Higher number of threads results in faster processing and higher RAM consumption.
-            output_metadata_file_path (str): Path to the file with reduced values (metadata). The file is only created when reducing tasks have been added for processing.
-            output_metadata_file_format (str): Format of the file with reduced values (metadata). The file is only created when reducing tasks have been added for processing.
+            output_reduce_file_path (str): Path to the file with reduced values (metadata). The file is only created when reducing tasks have been added for processing.
+            output_reduce_file_format (str): Format of the file with reduced values (metadata). The file is only created when reducing tasks have been added for processing.
             saving_status_file_prefix (str): Location of a temporary file containing information about the saving status of processed results. The file is deleted after processing is complete and the output dataset is created. (Default: '.saving_status').
             verbose (bool): If it is set to True, processing statusses are logged to the logger during processing. If false, the logger is not used. (Default: True).
             logger: Custom logger to which logs are passed on. If the logger is undefined and verbose = True then a default logger is created to print statuses on the console. (Default: None).
@@ -290,12 +290,14 @@ class DataPipeline:
 
     _FLATTEN_ORDER_EXCEPTION = "The flatten task can only be executed after a processing stage. Currently the are no processing tasks assigned"
 
-    def __init__(self, reader, saver=None,
-                 processing_chunk_size=20000, num_workers=None, output_metadata_file_path=None,
-                 output_metadata_file_format='yaml', verbose=True,
-                 logger=None):
+    def __init__(self, reader, saver=None, processing_chunk_size=20000, num_workers=None,
+                 output_reduce_file_path=None, output_reduce_file_format='yaml', custom_reduce_save_callback=None,
+                 verbose=True, logger=None):
         self.flattened_steps = []
-        assert output_metadata_file_format == 'yaml' or output_metadata_file_format == 'json' 'Only yaml and json files are supported to save reduced values.'
+        assert output_reduce_file_format == 'yaml' or output_reduce_file_format == 'json' 'Only yaml and json files are supported to save reduced values.'
+        assert (output_reduce_file_path is not None and custom_reduce_save_callback is None) or \
+               (output_reduce_file_path is None and custom_reduce_save_callback is not None)
+        'If the custom reduce callback has been specified the output_reduce_file_path should be None'
         self.num_workers = num_workers if num_workers is not None else multiprocessing.cpu_count() - 1
         self.reader = reader
         self.saver = saver
@@ -304,10 +306,11 @@ class DataPipeline:
         self.inference_tasks = []
         self.output_files_counter = 0
         self.output_rows_last_file = 0
-        self.output_metadata_file_path = output_metadata_file_path
-        self.output_metadata_file_format = output_metadata_file_format
+        self.output_reduce_file_path = output_reduce_file_path
+        self.output_reduce_file_format = output_reduce_file_format
+        self.custom_reduce_save_callback = custom_reduce_save_callback
         self.verbose = verbose
-        self._proxy_object=None
+        self._proxy_object = None
 
         if verbose and logger is None:
             self.logger = self._create_and_configure_logger()
@@ -359,8 +362,8 @@ class DataPipeline:
         self.flattened_steps.append(len(self.tasks))
         return self
 
-    def proxy_object(self,proxy_object):
-        self._proxy_object=proxy_object
+    def proxy_object(self, proxy_object):
+        self._proxy_object = proxy_object
         return self
 
     def _get_reduce_tasks(self):
@@ -445,11 +448,12 @@ class DataPipeline:
     def _setup_tasks(self):
         for task in self.tasks:
             task.setup()
+        self._print_logs('Starting processing groups {}'.format(self.tasks))
 
     def _execute_pipeline(self, input_data) -> list:
         start_time = time.time()
         local_reductions_file_mapping = {}
-        data_bucket, tmp_dir,proxy_object = input_data
+        data_bucket, tmp_dir, proxy_object = input_data
         data_bucket.setup()
         self._setup_tasks()
         for task in self.tasks:
@@ -466,7 +470,8 @@ class DataPipeline:
                     if task.type() == TaskType.BALANCING:
                         balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
                     elements = []
-                    for data in self.gen_chunks(data_list, task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
+                    for data in self.gen_chunks(data_list,
+                                                task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
                         if task.type() == TaskType.PROCESSOR:
                             elements.append(task.process(data))
                         elif task.type() == TaskType.FILTER and task.filter(data):
@@ -578,20 +583,23 @@ class DataPipeline:
         dict_to_save = {}
         for k, v in global_reductions:
             dict_to_save[k] = v
-        Path(self.output_metadata_file_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(self.output_metadata_file_path, 'w') as fp:
-            if self.output_metadata_file_format == 'yaml':
-                yaml.dump(dict_to_save, fp)
-            elif self.output_metadata_file_format == 'json':
-                json.dump(dict_to_save, fp)
-            else:
-                raise Exception("File extension {} not supported".format(self.output_metadata_file_format))
+        Path(self.output_reduce_file_path).parent.mkdir(parents=True, exist_ok=True)
+        if self.custom_reduce_save_callback is None:
+            with open(self.output_reduce_file_path, 'w') as fp:
+                if self.output_reduce_file_format == 'yaml':
+                    yaml.dump(dict_to_save, fp)
+                elif self.output_reduce_file_format == 'json':
+                    json.dump(dict_to_save, fp)
+                else:
+                    raise Exception("File extension {} not supported".format(self.output_reduce_file_format))
+        else:
+            self.custom_reduce_save_callback(dict_to_save)
 
     def _execute(self, tmp_dir):
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
-        if len(self._get_reduce_tasks()) == 0 and self.output_metadata_file_path is not None:
+        if len(self._get_reduce_tasks()) == 0 and self.output_reduce_file_path is not None:
             raise AssertionError("You have defined a file name for reduce output but there is no task to reduce.")
-        if len(self._get_reduce_tasks()) > 0 and self.output_metadata_file_path is None:
+        if len(self._get_reduce_tasks()) > 0 and self.output_reduce_file_path is None:
             raise AssertionError(
                 "You have defined {} tasks to reduce but a file name for reduce output is still not defined.".format(
                     len(self._get_reduce_tasks())))
@@ -605,7 +613,8 @@ class DataPipeline:
         self._print_logs('Created {} dedicated data buckets for multi-threaded execution.'.format(len(data_buckets)))
         self._print_logs('Processing has started...')
         try:
-            local_reductions_file_mappings = pool.map(self._execute_pipeline, [(db, tmp_dir,self._proxy_object) for db in data_buckets])
+            local_reductions_file_mappings = pool.map(self._execute_pipeline,
+                                                      [(db, tmp_dir, self._proxy_object) for db in data_buckets])
         except Exception as e:
             pool.terminate()
             self.logger.error('Ann error during processing occured: {}'.format(str(e)))
@@ -621,7 +630,7 @@ class DataPipeline:
             global_reductions = pool.map(self._reduce_globally, global_reduction_tasks)
             self._save_reduced(global_reductions)
             self._print_logs(
-                'Metadata generation completed. Statistics saved to {}.'.format(self.output_metadata_file_path))
+                'Metadata generation completed. Statistics saved to {}.'.format(self.output_reduce_file_path))
         self._print_logs('Data from SUCCESSFULLY shifted!')
         pool.close()
 
