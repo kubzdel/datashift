@@ -584,8 +584,8 @@ class DataPipeline:
         dict_to_save = {}
         for k, v in global_reductions:
             dict_to_save[k] = v
-        Path(self.output_reduce_file_path).parent.mkdir(parents=True, exist_ok=True)
         if self.custom_reduce_save_callback is None:
+            Path(self.output_reduce_file_path).parent.mkdir(parents=True, exist_ok=True)
             with open(self.output_reduce_file_path, 'w') as fp:
                 if self.output_reduce_file_format == 'yaml':
                     yaml.dump(dict_to_save, fp)
