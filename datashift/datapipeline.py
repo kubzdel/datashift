@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import traceback
 import csv
 import glob
 import json
@@ -451,12 +451,21 @@ class DataPipeline:
         for task in self.tasks:
             task.setup()
 
+    def _excepthook(self,exctype, value, traceback):
+        traceback.print_exc()
+        self.logger.error("Type: {}".format(exctype))
+        self.logger.error("Value: {}".format(value))
+        self.logger.error("Traceback: {}".format(traceback))
+        for p in multiprocessing.active_children():
+            p.terminate()
+
     def _execute_process(self, input_data):
         try:
             return self._execute_pipeline(input_data)
         except Exception as e:
             self.logger.error("Catching exception...")
             self.logger.error(e)
+            traceback.print_exc()
             raise Exception(e.message)
 
     def _execute_pipeline(self, input_data) -> list:
@@ -605,6 +614,7 @@ class DataPipeline:
             self.custom_reduce_save_callback(dict_to_save)
 
     def _execute(self, tmp_dir):
+        self._excepthook=self._excepthook
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
         if len(self._get_reduce_tasks()) == 0 and (self.output_reduce_file_path is not None or self.custom_reduce_save_callback is not None):
             raise AssertionError("You have defined a file name or callback for reduce output but there is no task to reduce.")
