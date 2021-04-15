@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 from abc import abstractmethod, ABC
+from builtins import input
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Iterator
@@ -449,7 +450,14 @@ class DataPipeline:
     def _setup_tasks(self):
         for task in self.tasks:
             task.setup()
-        self._print_logs('Starting processing groups {}'.format(self.tasks))
+
+    def _execute_process(self, input_data):
+        try:
+            return self._execute_pipeline(input_data)
+        except Exception as e:
+            self.logger.error("Catching exception...")
+            self.logger.error(e)
+            raise Exception(e.message)
 
     def _execute_pipeline(self, input_data) -> list:
         start_time = time.time()
@@ -614,7 +622,7 @@ class DataPipeline:
         self._print_logs('Created {} dedicated data buckets for multi-threaded execution.'.format(len(data_buckets)))
         self._print_logs('Processing has started...')
         try:
-            local_reductions_file_mappings = pool.map(self._execute_pipeline,
+            local_reductions_file_mappings = pool.map(self._execute_process,
                                                       [(db, tmp_dir, self._proxy_object) for db in data_buckets])
         except Exception as e:
             pool.terminate()
