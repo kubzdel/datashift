@@ -1,5 +1,5 @@
 from __future__ import annotations
-import traceback
+
 import csv
 import glob
 import json
@@ -11,8 +11,8 @@ import pickle
 import sys
 import tempfile
 import time
+import traceback
 from abc import abstractmethod, ABC
-from builtins import input
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Iterator
@@ -381,6 +381,9 @@ class DataPipeline:
 
     def _calculate_subcategories_probabilities(self, data_list, task: AbstractBalancingTask) -> dict:
         cat_and_subcat_dict = self._retrieve_and_validate_distribution_categories(data_list, task)
+        for key in cat_and_subcat_dict.keys():
+            cat_and_subcat_dict[key] = {k: v for k, v in
+                                        sorted(cat_and_subcat_dict[key].items(), key=lambda item: item[0])}
         adjusted_cat_and_subcat_dict = self._adjust_number_of_samples_per_subcategory(cat_and_subcat_dict,
                                                                                       task.max_proportion_difference_characteristic,
                                                                                       task.characteristic_distribution)
@@ -400,32 +403,27 @@ class DataPipeline:
             [sum(subcat.values()) for subcat in cat_and_subcat_dict.values()]) * max_proportion_difference_category
         for cat, subcat in cat_and_subcat_dict.items():
             to_remove = sum(subcat.values()) - min_cat
+
+            # make sure that _remove_from_values() uses sorted subcategories to preserve order in each chunk
             subcat_sorted = {k: v for k, v in sorted(subcat.items(), key=lambda item: item[1], reverse=True)}
-            new_values = self._remove_from_values(list(subcat.values()), to_remove)
+
+            new_values = self._remove_from_values(list(subcat_sorted.values()), to_remove)
             for k, v in zip(subcat_sorted.keys(), new_values):
                 cat_and_subcat_dict[cat][k] = v
         return cat_and_subcat_dict
 
     def _remove_from_values(self, values, n_to_remove) -> list:
-        assert sum(values) > n_to_remove
-        values_len = len(values)
-        while n_to_remove > 0:
-            indices = [i for i in range(values_len) if values[0] == values[i]]
-            if indices[-1] + 1 < values_len:
-                possible_to_be_deleted = (values[indices[-1]] - values[indices[-1] + 1]) * len(indices)
-            else:
-                possible_to_be_deleted = n_to_remove
-            for i in indices:
-                current_to_be_removed = math.floor(possible_to_be_deleted / len(indices))
-                if current_to_be_removed < 1:
-                    current_to_be_removed = 1
-                if current_to_be_removed > n_to_remove:
-                    current_to_be_removed = n_to_remove
-                values[i] = values[i] - current_to_be_removed
-                n_to_remove = n_to_remove - current_to_be_removed
-                if n_to_remove == 0:
-                    break
-        return values
+        # for categories, where total numbers of samples < (min_cat * max_proportion_difference_category)
+        # n_to_remove is negative, thus don't do any adjustments
+        if n_to_remove < 1:
+            return values
+        else:
+            # else remove percent of samples proportionally for every subcategory
+            percent = n_to_remove / sum(values)
+            new_values = []
+            for value in values:
+                new_values.append((1 - percent) * value)
+            return new_values
 
     def _adjust_number_of_samples_per_subcategory(self, cat_and_subcat_dict,
                                                   max_proportion_difference_subcategory=None,
@@ -451,7 +449,7 @@ class DataPipeline:
         for task in self.tasks:
             task.setup()
 
-    def _excepthook(self,exctype, value, traceback):
+    def _excepthook(self, exctype, value, traceback):
         traceback.print_exc()
         self.logger.error("Type: {}".format(exctype))
         self.logger.error("Value: {}".format(value))
@@ -511,7 +509,14 @@ class DataPipeline:
                 for reduced_value_name, value in local_reductions.items():
                     fp = tempfile.NamedTemporaryFile(delete=False, dir=tmp_dir)
                     pickle.dump(value, fp, protocol=pickle.HIGHEST_PROTOCOL)
-                    local_reductions_file_mapping[reduced_value_name] = fp.name
+
+                    # local reduction tmp file was overwritten with multiple chunks in single execution
+                    # solution: return metadata tmp files as list, not single path
+                    if reduced_value_name in local_reductions_file_mapping:
+                        local_reductions_file_mapping[reduced_value_name].append(fp.name)
+                    else:
+                        local_reductions_file_mapping[reduced_value_name] = [fp.name]
+                    fp.close()
             data_list = data_bucket.next_data_chunk()
         data_bucket.teardown()
         self._teardown_tasks()
@@ -614,10 +619,12 @@ class DataPipeline:
             self.custom_reduce_save_callback(dict_to_save)
 
     def _execute(self, tmp_dir):
-        sys.excepthook=self._excepthook
+        sys.excepthook = self._excepthook
         self._print_logs('Dataset shifting has started - {} workers.'.format(self.num_workers))
-        if len(self._get_reduce_tasks()) == 0 and (self.output_reduce_file_path is not None or self.custom_reduce_save_callback is not None):
-            raise AssertionError("You have defined a file name or callback for reduce output but there is no task to reduce.")
+        if len(self._get_reduce_tasks()) == 0 and (
+                self.output_reduce_file_path is not None or self.custom_reduce_save_callback is not None):
+            raise AssertionError(
+                "You have defined a file name or callback for reduce output but there is no task to reduce.")
         if len(self._get_reduce_tasks()) > 0 and self.output_reduce_file_path is None and self.custom_reduce_save_callback is None:
             raise AssertionError(
                 "You have defined {} tasks to reduce but a file name and callback for reduce output is still not defined.".format(
@@ -644,8 +651,10 @@ class DataPipeline:
             self._print_logs('Metadata generation has started...')
             local_reductions_file_mappings = [lr for lr in local_reductions_file_mappings if
                                               lr is not None and len(lr) > 0]
-            global_reduction_tasks = [(task, [lr[task.reduced_value_name] for lr in local_reductions_file_mappings]) for
-                                      task in self._get_reduce_tasks()]
+            # changed list comprehension tu use path lists instead of single string path
+            global_reduction_tasks = [
+                (task, [k for lr in local_reductions_file_mappings for k in lr[task.reduced_value_name]]) for
+                task in self._get_reduce_tasks()]
             global_reductions = pool.map(self._reduce_globally, global_reduction_tasks)
             self._save_reduced(global_reductions)
             self._print_logs(
