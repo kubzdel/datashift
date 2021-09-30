@@ -484,7 +484,8 @@ class DataPipeline:
                     self._validate_and_reduce_locally(task, data_list, local_reductions)
                 else:
                     if task.type() == TaskType.BALANCING:
-                        balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
+                        if len(data_list) > 0:
+                            balancing_probabilities = self._calculate_subcategories_probabilities(data_list, task)
                     elements = []
                     for data in self.gen_chunks(data_list,
                                                 task.get_chunk_size()) if task.get_chunk_size() > 1 else data_list:
@@ -608,9 +609,9 @@ class DataPipeline:
             dict_to_save[k] = v
         if self.custom_reduce_save_callback is None:
             Path(self.output_reduce_file_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(self.output_reduce_file_path, 'w') as fp:
+            with open(self.output_reduce_file_path, 'w', encoding='utf-8') as fp:
                 if self.output_reduce_file_format == 'yaml':
-                    yaml.dump(dict_to_save, fp)
+                    yaml.dump(dict_to_save, fp, allow_unicode=True)
                 elif self.output_reduce_file_format == 'json':
                     json.dump(dict_to_save, fp)
                 else:
